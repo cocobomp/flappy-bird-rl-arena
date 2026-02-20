@@ -1,8 +1,6 @@
 """Multi-Bird RL Race — Watch multiple RL agents compete at Flappy Bird."""
-import sys
 import pygame
-from src.game.engine import FlappyBirdEngine
-from src.game.renderer import GameRenderer
+from src.game.renderer import GameRenderer, WINDOW_WIDTH, WINDOW_HEIGHT
 from src.game.race import RaceManager
 from src.game.ui import AddBirdDialog
 
@@ -10,11 +8,11 @@ from src.game.ui import AddBirdDialog
 def main():
     manager = RaceManager(render=True)
     renderer = GameRenderer()
-    dialog = AddBirdDialog()
+    dialog = AddBirdDialog(window_width=WINDOW_WIDTH, window_height=WINDOW_HEIGHT)
 
-    # Start with 3 default birds
-    manager.add_bird(algo="dqn", reward="basic")
-    manager.add_bird(algo="double_dqn", reward="distance")
+    # Start with 3 default birds showcasing different combos
+    manager.add_bird(algo="dqn", reward="smart")
+    manager.add_bird(algo="double_dqn", reward="smart")
     manager.add_bird(algo="q_learning", reward="basic")
     manager.reset_round()
 
@@ -40,19 +38,21 @@ def main():
                 elif event.key == pygame.K_DOWN:
                     manager.speed = max(manager.speed // 2, 1)
 
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                # Check dialog first
+            # Forward mouse events to dialog (needed for slider dragging)
+            elif event.type in (
+                pygame.MOUSEBUTTONDOWN, pygame.MOUSEMOTION, pygame.MOUSEBUTTONUP,
+            ):
                 if dialog.active:
                     result = dialog.handle_event(event)
                     if result == "confirm":
                         config = dialog.get_config()
-                        manager.add_bird(algo=config["algo"], reward=config["reward"])
+                        manager.add_bird(**config)
                         dialog.hide()
                         manager.reset_round()
                     elif result == "cancel":
                         dialog.hide()
-                else:
-                    # Check buttons
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    # Check buttons (only on click, not motion)
                     mx, my = event.pos
                     for btn in buttons:
                         if btn["rect"] and btn["rect"].collidepoint(

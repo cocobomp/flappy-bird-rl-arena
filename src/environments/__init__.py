@@ -5,6 +5,7 @@ from src.environments.rewards import (
     BasicReward,
     DistanceReward,
     CenteredReward,
+    SmartReward,
 )
 from src.environments.wrappers import (
     SimpleObsWrapper,
@@ -17,6 +18,7 @@ __all__ = [
     "BasicReward",
     "DistanceReward",
     "CenteredReward",
+    "SmartReward",
     "SimpleObsWrapper",
     "EnrichedObsWrapper",
     "CustomRewardWrapper",

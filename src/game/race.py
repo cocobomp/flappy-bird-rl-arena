@@ -3,7 +3,9 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from src.agents import QLearningAgent, DQNAgent, DoubleDQNAgent, BaseAgent
-from src.environments.rewards import BasicReward, DistanceReward, CenteredReward, RewardFunction
+from src.environments.rewards import (
+    BasicReward, DistanceReward, CenteredReward, SmartReward, RewardFunction,
+)
 from src.game.engine import FlappyBirdEngine, Bird, SCREEN_WIDTH, GROUND_Y, PIPE_GAP
 from src.game.ui import BIRD_COLORS, ALGO_DISPLAY, REWARD_DISPLAY
 
@@ -17,6 +19,7 @@ REWARD_MAP = {
     "basic": BasicReward,
     "distance": DistanceReward,
     "centered": CenteredReward,
+    "smart": SmartReward,
 }
 
 STATE_DIM = 4
@@ -30,6 +33,10 @@ class BirdEntry:
     reward: str
     color: tuple[int, int, int]
     state_dim: int = STATE_DIM
+    epsilon_start: float = 0.8
+    lr: float = 5e-4
+    epsilon_decay: float = 0.998
+    death_penalty: float = 5.0
     agent: BaseAgent = field(init=False)
     reward_fn: RewardFunction = field(init=False)
     bird: Bird | None = field(default=None, init=False)
@@ -41,17 +48,22 @@ class BirdEntry:
         if self.algo == "q_learning":
             self.agent = agent_cls(
                 state_dim=self.state_dim, action_dim=ACTION_DIM,
-                n_bins=10, lr=0.1, gamma=0.99,
-                epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=0.998,
+                n_bins=10, lr=self.lr, gamma=0.99,
+                epsilon_start=self.epsilon_start, epsilon_end=0.01,
+                epsilon_decay=self.epsilon_decay,
             )
         else:
             self.agent = agent_cls(
                 state_dim=self.state_dim, action_dim=ACTION_DIM,
-                hidden_dims=[64, 64], lr=5e-4, gamma=0.99,
-                epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=0.998,
+                hidden_dims=[64, 64], lr=self.lr, gamma=0.99,
+                epsilon_start=self.epsilon_start, epsilon_end=0.01,
+                epsilon_decay=self.epsilon_decay,
                 buffer_size=20000, batch_size=32, tau=0.005, train_every=4,
             )
-        self.reward_fn = REWARD_MAP[self.reward]()
+        if self.reward == "smart":
+            self.reward_fn = SmartReward(death_penalty=self.death_penalty)
+        else:
+            self.reward_fn = REWARD_MAP[self.reward]()
 
     @property
     def display_name(self) -> str:
@@ -70,10 +82,16 @@ class RaceManager:
         self.paused = False
         self._color_index = 0
 
-    def add_bird(self, algo: str, reward: str) -> BirdEntry:
+    def add_bird(self, algo: str, reward: str, epsilon_start: float = 0.8,
+                 lr: float = 5e-4, epsilon_decay: float = 0.998,
+                 death_penalty: float = 5.0) -> BirdEntry:
         color = BIRD_COLORS[self._color_index % len(BIRD_COLORS)]
         self._color_index += 1
-        entry = BirdEntry(algo=algo, reward=reward, color=color)
+        entry = BirdEntry(
+            algo=algo, reward=reward, color=color,
+            epsilon_start=epsilon_start, lr=lr,
+            epsilon_decay=epsilon_decay, death_penalty=death_penalty,
+        )
         bird = self.engine.add_bird(color=color)
         entry.bird = bird
         self.entries.append(entry)
@@ -84,7 +102,6 @@ class RaceManager:
             bird_id = self.entries[index].bird.bird_id
             self.engine.remove_bird(bird_id)
             self.entries.pop(index)
-            # Re-link birds after reindex
             for i, entry in enumerate(self.entries):
                 entry.bird = self.engine.birds[i]
 
@@ -98,7 +115,6 @@ class RaceManager:
         if not self.entries:
             return True
 
-        # Collect actions from all alive birds
         actions = {}
         for entry in self.entries:
             if entry.bird.alive:
@@ -107,22 +123,18 @@ class RaceManager:
                 actions[entry.bird.bird_id] = action
                 entry.prev_obs = obs
 
-        # Step engine
         obs_dict, _, done_dict, info = self.engine.step(actions)
 
-        # Train each bird's agent
         for entry in self.entries:
             bid = entry.bird.bird_id
             if entry.prev_obs is not None:
                 obs = obs_dict.get(bid, entry.prev_obs)
                 terminated = done_dict.get(bid, False)
-                # Compute custom reward
                 raw_reward = 0.1 if not terminated else -1.0
                 reward = entry.reward_fn.compute(obs, raw_reward, terminated, False)
                 action = actions.get(bid, 0)
                 entry.agent.train_step(entry.prev_obs, action, reward, obs, terminated)
 
-        # Update best scores
         for entry in self.entries:
             if entry.bird.score > entry.best_score:
                 entry.best_score = entry.bird.score
@@ -137,5 +149,6 @@ class RaceManager:
                 "algo": ALGO_DISPLAY[entry.algo],
                 "reward": REWARD_DISPLAY[entry.reward],
                 "best_score": entry.best_score,
+                "epsilon": round(entry.agent.epsilon, 3),
             }
         return configs

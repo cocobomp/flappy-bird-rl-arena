@@ -129,3 +129,57 @@ class CenteredReward(RewardFunction):
         bonus = 2.0 * np.exp(-5.0 * distance)
 
         return 1.0 + bonus
+
+
+class SmartReward(RewardFunction):
+    """Combined reward: centering + velocity direction + progress + survival.
+
+    Provides the richest learning signal by rewarding:
+      - Centering: exponential bonus for being near gap center (0 to 2.0)
+      - Direction: bonus for moving toward gap (+0.3), penalty for away (-0.1)
+      - Progress: bonus for being close to next pipe (0 to 0.3)
+      - Survival: small constant bonus (+0.1)
+      - Death: configurable penalty (default -5.0)
+
+    Supports both 4-feature (custom engine) and 12-feature (gymnasium) obs.
+    """
+
+    def __init__(self, death_penalty: float = 5.0):
+        self.death_penalty = death_penalty
+
+    def compute(
+        self,
+        obs: np.ndarray,
+        raw_reward: float,
+        terminated: bool,
+        truncated: bool,
+    ) -> float:
+        if terminated:
+            return -self.death_penalty
+
+        if len(obs) <= 4:
+            player_y = float(obs[0])
+            velocity = float(obs[1])
+            dist_next = float(obs[2])
+            gap_center = float(obs[3])
+        else:
+            gap_center = (float(obs[4]) + float(obs[5])) / 2.0
+            player_y = float(obs[9])
+            velocity = float(obs[10]) if len(obs) > 10 else 0.0
+            dist_next = float(obs[3])
+
+        # Centering: max 2.0 when perfectly centered in gap
+        centering = 2.0 * np.exp(-5.0 * abs(player_y - gap_center))
+
+        # Direction: reward moving toward the gap center
+        if player_y > gap_center:
+            # Bird below gap → reward going up (negative velocity)
+            direction = 0.3 if velocity < 0 else -0.1
+        else:
+            # Bird above gap → reward going down (positive velocity)
+            direction = 0.3 if velocity > 0 else -0.1
+
+        # Progress: closer to pipe = more reward
+        progress = (1.0 - max(0.0, dist_next)) * 0.3
+
+        return 0.1 + centering + direction + progress
