@@ -279,17 +279,17 @@ class DQNAgent(BaseAgent):
         torch.save(self.target_net.state_dict(), path / "target_net.pt")
 
         params = {
-            "state_dim": self.state_dim,
-            "action_dim": self.action_dim,
-            "gamma": self.gamma,
-            "epsilon": self.epsilon,
-            "epsilon_end": self.epsilon_end,
-            "epsilon_decay": self.epsilon_decay,
-            "batch_size": self.batch_size,
-            "tau": self.tau,
-            "train_every": self.train_every,
-            "lr": self.lr,
-            "step_count": self._step_count,
+            "state_dim": int(self.state_dim),
+            "action_dim": int(self.action_dim),
+            "gamma": float(self.gamma),
+            "epsilon": float(self.epsilon),
+            "epsilon_end": float(self.epsilon_end),
+            "epsilon_decay": float(self.epsilon_decay),
+            "batch_size": int(self.batch_size),
+            "tau": float(self.tau),
+            "train_every": int(self.train_every),
+            "lr": float(self.lr),
+            "step_count": int(self._step_count),
         }
         with open(path / "params.json", "w") as f:
             json.dump(params, f, indent=2)
