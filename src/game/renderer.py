@@ -5,6 +5,7 @@ from src.game.engine import (
     SCREEN_WIDTH, SCREEN_HEIGHT, GROUND_Y,
     PLAYER_WIDTH, PLAYER_HEIGHT, PIPE_WIDTH, PIPE_HEIGHT, PIPE_GAP,
 )
+from src.game.ui import Slider
 
 PANEL_WIDTH = 280
 EDUCATION_WIDTH = 300
@@ -30,6 +31,8 @@ DIM_COLOR = (130, 130, 160)
 EXPLORE_COLOR = (255, 180, 50)
 EXPLOIT_COLOR = (50, 200, 255)
 WARNING_COLOR = (255, 100, 100)
+MINI_BTN = (55, 55, 75)
+MINI_BTN_HOVER = (75, 75, 100)
 
 # Tooltip descriptions
 ALGO_TOOLTIPS = {
@@ -39,17 +42,17 @@ ALGO_TOOLTIPS = {
 }
 
 REWARD_TOOLTIPS = {
-    "Basic": "Reward Basic : +1 en vie\n-1000 a la mort",
-    "Dist": "Reward Distance : bonus\nproportionnel a la proximite\ndu prochain tuyau",
-    "Center": "Reward Centered : bonus\npour rester centre dans\nl'ouverture du tuyau",
-    "Smart": "Reward Smart : combine centrage\n+ direction + progression.\nRecommande pour l'apprentissage",
+    "Basic": "+1 en vie, -1000 a la mort",
+    "Dist": "Bonus proximite prochain tuyau",
+    "Center": "Bonus centrage dans le gap",
+    "Smart": "Centrage + direction + progression",
 }
 
 STRATEGY_TOOLTIPS = {
-    "Random": "50/50 aleatoire\nflap(-9) >> gravite(+1)\n=> monte toujours! (demo)",
-    "Gravity": "15% de flap en exploration\nCompense l'asymetrie physique\nL'oiseau reste en l'air",
-    "Heurist.": "Regarde la position de la porte\nFlap si en-dessous, stop si\nau-dessus. +15% de bruit",
-    "Guided": "Gravity quand loin de la porte\nHeuristique quand proche\nLe meilleur des deux mondes!",
+    "Random": "50/50 aleatoire (monte toujours!)",
+    "Gravity": "12% de flap (compense physique)",
+    "Heurist.": "Flap si sous porte + velocite",
+    "Guided": "Gravity loin + Heuristique pres",
 }
 
 # Education panel content
@@ -59,54 +62,49 @@ EDUCATION_SECTIONS = [
         "qui apprend a jouer en jouant.",
         "",
     ]),
-    ("Pourquoi ils montent?", WARNING_COLOR, [
-        "Random: 50% flap. Or flap=-9",
-        "et gravite=+1 par frame.",
-        "Moyenne: velocite tres negative",
-        "= monte toujours et meurt!",
+    ("Pourquoi Random = nul?", WARNING_COLOR, [
+        "Flap donne velocite = -9 (haut)",
+        "Gravite = seulement +1 / frame",
+        "Avec 50% de flap l'oiseau",
+        "monte TOUJOURS vers le plafond!",
         "",
     ]),
     ("Strategies d'exploration", SECTION_COLOR, [
         "Quand e (epsilon) est haut,",
         "l'agent explore avec sa",
-        "strategie au lieu du hasard:",
+        "strategie choisie:",
         "",
-        "Random  50/50 (mauvais!)",
-        "Gravity 15% flap seulement",
+        "Random  50/50 (demo, nul!)",
+        "Gravity 12% flap seulement",
         "Heurist Flap si sous la porte",
+        "        ET pas deja en montee",
         "Guided  Gravity+Heuristique",
-        "        (le meilleur!)",
+        "        = le meilleur combo!",
         "",
     ]),
     ("Entrainement visible", SECTION_COLOR, [
         "EXPLORE = utilise la strategie",
         "APPREND = utilise le reseau!",
-        "Quand e diminue, l'agent",
-        "passe de EXPLORE a APPREND.",
-        "C'est l'apprentissage!",
+        "Q-values: le reseau apprend",
+        "quelle action est meilleure.",
+        "Quand Q(flap) != Q(noop),",
+        "le reseau a appris quelquechose!",
         "",
     ]),
-    ("Recompenses", SECTION_COLOR, [
-        "Basic  +1 vie, -mort (faible)",
-        "Dist   Bonus proximite tuyau",
-        "Center Bonus centrage gap",
-        "Smart  Tout combine!",
-        "BONUS PORTE: grosse recompense",
-        "quand l'oiseau passe un tuyau!",
-        "",
-    ]),
-    ("Algorithmes", SECTION_COLOR, [
-        "QL   Table de Q-valeurs",
-        "DQN  Reseau de neurones",
-        "DDQN Corrige surestimation",
+    ("Controles live", SECTION_COLOR, [
+        "[Strat] Change la strategie",
+        "[e/2]   Divise epsilon par 2",
+        "[X]     Supprime l'oiseau",
+        "[Boost] Epsilon=0.05 pour tous",
+        "Slider  Vitesse de 1 a 64",
         "",
     ]),
     ("Conseils", SECTION_COLOR, [
         "* Guided + Smart = apprend vite",
-        "* Random pour voir le probleme",
-        "* Comparez les strategies!",
-        "* Vitesse x32+ pour accelerer",
-        "* Observez EXPLORE -> APPREND",
+        "* Montez vitesse a x32 - x64",
+        "* Cliquez [e/2] quand les",
+        "  Q-values commencent a varier",
+        "* Comparez Random vs Guided!",
     ]),
 ]
 
@@ -124,14 +122,45 @@ class GameRenderer:
         self.font_large = pygame.font.SysFont("monospace", 18, bold=True)
         self.font_title = pygame.font.SysFont("monospace", 22, bold=True)
         self.font_small = pygame.font.SysFont("monospace", 11)
+        self.font_tiny = pygame.font.SysFont("monospace", 10)
         self._hover_rects = []
+        self._bird_buttons = []  # [(rect_panel_coords, action_str, bird_index)]
+        # Speed slider in panel coords
+        self._speed_slider = Slider(10, 50, PANEL_WIDTH - 20, 1, 64, 1, "Vitesse")
 
-    def draw(self, engine: FlappyBirdEngine, speed: int, paused: bool,
+    @property
+    def speed(self):
+        return max(1, round(self._speed_slider.value))
+
+    @speed.setter
+    def speed(self, val):
+        self._speed_slider.value = max(1, min(64, val))
+
+    def handle_event(self, event) -> tuple | None:
+        """Handle mouse events for panel controls.
+
+        Returns:
+            ("cycle_strategy", bird_index) or ("halve_epsilon", bird_index)
+            or ("remove", bird_index) or None.
+        """
+        # Forward to speed slider (translate to panel coords)
+        self._speed_slider.handle_event(event, dx=SCREEN_WIDTH, dy=0)
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            mx = event.pos[0] - SCREEN_WIDTH
+            my = event.pos[1]
+            for rect, action, idx in self._bird_buttons:
+                if rect.collidepoint(mx, my):
+                    return (action, idx)
+        return None
+
+    def draw(self, engine: FlappyBirdEngine, speed_val: int, paused: bool,
              bird_configs: dict, buttons: list[dict]):
         """Draw the full frame: game area + panel + education."""
         self._hover_rects = []
+        self._bird_buttons = []
         self._draw_game(engine)
-        self._draw_panel(engine, speed, paused, bird_configs, buttons)
+        self._draw_panel(engine, paused, bird_configs, buttons)
         self._draw_education_panel()
         self._draw_tooltips()
         pygame.display.flip()
@@ -141,7 +170,6 @@ class GameRenderer:
         game_surface = self.screen.subsurface((0, 0, SCREEN_WIDTH, SCREEN_HEIGHT))
         game_surface.fill(SKY_COLOR)
 
-        # Pipes
         for pipe in engine.pipes:
             px = int(pipe["x"])
             upper_rect = pygame.Rect(px, 0, PIPE_WIDTH, pipe["gap_y"])
@@ -175,7 +203,7 @@ class GameRenderer:
             pygame.draw.circle(game_surface, (255, 255, 255), (eye_x, eye_y), 5)
             pygame.draw.circle(game_surface, (0, 0, 0), (eye_x, eye_y), 2)
 
-        # Connecting lines from alive birds to next pipe gap
+        # Lines from alive birds to next pipe gap
         if engine.pipes:
             next_pipe = None
             for pipe in engine.pipes:
@@ -193,23 +221,33 @@ class GameRenderer:
                     by = int(bird.y + PLAYER_HEIGHT // 2)
                     pygame.draw.line(game_surface, bird.color, (bx, by), (px, gap_center), 1)
 
-    def _draw_panel(self, engine: FlappyBirdEngine, speed: int, paused: bool,
+    def _draw_panel(self, engine: FlappyBirdEngine, paused: bool,
                     bird_configs: dict, buttons: list[dict]):
-        """Draw the side panel with stats and controls."""
+        """Draw the side panel with speed slider, bird stats, controls, and buttons."""
         panel = self.screen.subsurface((SCREEN_WIDTH, 0, PANEL_WIDTH, WINDOW_HEIGHT))
         panel.fill(PANEL_BG)
 
-        y = 10
+        y = 8
         title = self.font_title.render(f"ROUND {engine.round_num}", True, HIGHLIGHT_COLOR)
         panel.blit(title, (10, y))
-        y += 30
 
-        speed_txt = self.font.render(f"Speed: x{speed}  {'PAUSED' if paused else ''}", True, TEXT_COLOR)
-        panel.blit(speed_txt, (10, y))
-        y += 25
+        # Paused label
+        if paused:
+            p = self.font.render("PAUSED", True, WARNING_COLOR)
+            panel.blit(p, (PANEL_WIDTH - p.get_width() - 10, y + 4))
+        y += 28
+
+        # Speed slider
+        self._speed_slider.draw(panel, self.font_small)
+        y = 72
 
         pygame.draw.line(panel, (80, 80, 100), (10, y), (PANEL_WIDTH - 10, y), 1)
-        y += 10
+        y += 8
+
+        # Mouse for hover detection on mini-buttons
+        mouse_pos = pygame.mouse.get_pos()
+        panel_mx = mouse_pos[0] - SCREEN_WIDTH
+        panel_my = mouse_pos[1]
 
         # Bird stats
         for bird in engine.birds:
@@ -221,72 +259,90 @@ class GameRenderer:
             total_pipes = config.get("total_pipes", 0)
             epsilon = config.get("epsilon", 0)
             exploring = config.get("exploring", True)
-
-            # Color indicator
-            indicator = pygame.Rect(10, y, 12, 12)
-            pygame.draw.rect(panel, bird.color, indicator)
-            pygame.draw.rect(panel, (200, 200, 200), indicator, 1)
+            q_display = config.get("q_display", "")
+            bird_idx = config.get("index", 0)
 
             status_color = ALIVE_COLOR if bird.alive else DEAD_COLOR
-            status = "alive" if bird.alive else "dead"
 
-            # Algo + Reward + Strategy label
-            label = self.font.render(f" {algo} {reward} [{strategy}]", True, TEXT_COLOR)
-            panel.blit(label, (26, y - 2))
-            # Store rect for tooltip
-            label_rect = pygame.Rect(SCREEN_WIDTH + 26, y - 2, label.get_width(), label.get_height())
-            tooltip = (
-                ALGO_TOOLTIPS.get(algo, "") + "\n\n"
-                + REWARD_TOOLTIPS.get(reward, "") + "\n\n"
-                + STRATEGY_TOOLTIPS.get(strategy, "")
-            )
+            # Line 1: color indicator + algo/reward/strategy
+            indicator = pygame.Rect(10, y, 10, 10)
+            pygame.draw.rect(panel, bird.color, indicator)
+            label = self.font.render(f"{algo} {reward} [{strategy}]", True, TEXT_COLOR)
+            panel.blit(label, (24, y - 2))
+            # Tooltip
+            label_rect = pygame.Rect(SCREEN_WIDTH + 24, y - 2, label.get_width(), label.get_height())
+            tooltip = (ALGO_TOOLTIPS.get(algo, "") + "\n"
+                       + REWARD_TOOLTIPS.get(reward, "") + "\n"
+                       + STRATEGY_TOOLTIPS.get(strategy, ""))
             self._hover_rects.append((label_rect, tooltip))
-            y += 16
+            y += 15
 
-            score_txt = self.font.render(
-                f"  Score:{bird.score} Best:{best} Pipes:{total_pipes} [{status}]",
+            # Line 2: score + best + pipes + status
+            score_txt = self.font_small.render(
+                f" S:{bird.score} B:{best} P:{total_pipes} {'alive' if bird.alive else 'dead'}",
                 True, status_color,
             )
-            panel.blit(score_txt, (10, y - 2))
-            y += 14
+            panel.blit(score_txt, (10, y))
+            y += 13
 
-            # Epsilon + explore/exploit status + pipe info
+            # Line 3: epsilon + Q-values + mode badge
             mode_color = EXPLORE_COLOR if exploring else EXPLOIT_COLOR
             mode_label = "EXPLORE" if exploring else "APPREND"
-            next_pipe = None
-            for pipe in engine.pipes:
-                if pipe["x"] + PIPE_WIDTH > bird.x:
-                    next_pipe = pipe
-                    break
 
-            info_parts = [f"  e={epsilon}"]
-            if next_pipe:
-                dist = int(next_pipe["x"] - bird.x)
-                gap_top = next_pipe["gap_y"]
-                gap_bot = next_pipe["gap_y"] + PIPE_GAP
-                info_parts.append(f"d={dist} gap={gap_top}-{gap_bot}")
+            eps_txt = self.font_tiny.render(f" e={epsilon}", True, DIM_COLOR)
+            panel.blit(eps_txt, (10, y))
 
-            info_txt = self.font_small.render(" ".join(info_parts), True, DIM_COLOR)
-            panel.blit(info_txt, (10, y - 2))
+            if q_display:
+                q_txt = self.font_tiny.render(q_display, True, (160, 180, 220))
+                panel.blit(q_txt, (80, y))
 
-            # Explore/learn badge
-            mode_txt = self.font_small.render(f"[{mode_label}]", True, mode_color)
-            panel.blit(mode_txt, (PANEL_WIDTH - mode_txt.get_width() - 10, y - 2))
-            y += 18
+            mode_txt = self.font_tiny.render(f"[{mode_label}]", True, mode_color)
+            panel.blit(mode_txt, (PANEL_WIDTH - mode_txt.get_width() - 10, y))
+            y += 13
+
+            # Line 4: mini control buttons [Strat] [e/2] [X]
+            btn_w = 60
+            btn_h = 16
+            gap = 6
+            bx = 14
+
+            # [Strat] button
+            strat_rect = pygame.Rect(bx, y, btn_w, btn_h)
+            hover = strat_rect.collidepoint(panel_mx, panel_my)
+            pygame.draw.rect(panel, MINI_BTN_HOVER if hover else MINI_BTN, strat_rect, border_radius=3)
+            st = self.font_tiny.render("Strat >", True, SECTION_COLOR)
+            panel.blit(st, (bx + 4, y + 2))
+            self._bird_buttons.append((strat_rect, "cycle_strategy", bird_idx))
+            bx += btn_w + gap
+
+            # [e/2] button
+            eps_rect = pygame.Rect(bx, y, btn_w, btn_h)
+            hover = eps_rect.collidepoint(panel_mx, panel_my)
+            pygame.draw.rect(panel, MINI_BTN_HOVER if hover else MINI_BTN, eps_rect, border_radius=3)
+            et = self.font_tiny.render("e / 2", True, EXPLORE_COLOR)
+            panel.blit(et, (bx + 10, y + 2))
+            self._bird_buttons.append((eps_rect, "halve_epsilon", bird_idx))
+            bx += btn_w + gap
+
+            # [X] button
+            x_rect = pygame.Rect(bx, y, 30, btn_h)
+            hover = x_rect.collidepoint(panel_mx, panel_my)
+            pygame.draw.rect(panel, (120, 40, 40) if hover else (80, 40, 40), x_rect, border_radius=3)
+            xt = self.font_tiny.render("X", True, WARNING_COLOR)
+            panel.blit(xt, (bx + 10, y + 2))
+            self._bird_buttons.append((x_rect, "remove", bird_idx))
+
+            y += 20
 
         # Separator
         pygame.draw.line(panel, (80, 80, 100), (10, y), (PANEL_WIDTH - 10, y), 1)
-        y += 10
+        y += 8
 
-        # Buttons
-        mouse_pos = pygame.mouse.get_pos()
-        mouse_x = mouse_pos[0] - SCREEN_WIDTH
-        mouse_y = mouse_pos[1]
-
+        # Main buttons
         for btn in buttons:
-            btn_rect = pygame.Rect(10, y, PANEL_WIDTH - 20, 28)
+            btn_rect = pygame.Rect(10, y, PANEL_WIDTH - 20, 26)
             btn["rect"] = btn_rect
-            hover = btn_rect.collidepoint(mouse_x, mouse_y)
+            hover = btn_rect.collidepoint(panel_mx, panel_my)
             color = BUTTON_HOVER if hover else BUTTON_COLOR
             pygame.draw.rect(panel, color, btn_rect, border_radius=4)
             pygame.draw.rect(panel, (100, 100, 120), btn_rect, 1, border_radius=4)
@@ -294,7 +350,7 @@ class GameRenderer:
             tx = btn_rect.x + (btn_rect.width - txt.get_width()) // 2
             ty = btn_rect.y + (btn_rect.height - txt.get_height()) // 2
             panel.blit(txt, (tx, ty))
-            y += 34
+            y += 32
 
     def _draw_education_panel(self):
         """Draw the right-side education/pedagogy panel."""
@@ -307,18 +363,18 @@ class GameRenderer:
             if title_color is None:
                 t = self.font_large.render(section_title, True, HIGHLIGHT_COLOR)
                 edu.blit(t, (10, y))
-                y += 24
+                y += 22
             else:
-                t = self.font.render(f"► {section_title}", True, title_color)
+                t = self.font.render(f"* {section_title}", True, title_color)
                 edu.blit(t, (10, y))
-                y += 18
+                y += 16
             for line in lines:
                 if line == "":
-                    y += 4
+                    y += 3
                     continue
-                t = self.font_small.render(line, True, TEXT_COLOR)
+                t = self.font_tiny.render(line, True, TEXT_COLOR)
                 edu.blit(t, (14, y))
-                y += 13
+                y += 12
 
         pygame.draw.line(edu, (60, 60, 80), (10, y), (EDUCATION_WIDTH - 10, y))
 

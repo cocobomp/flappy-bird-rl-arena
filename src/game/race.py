@@ -8,7 +8,7 @@ from src.environments.rewards import (
 )
 from src.game.engine import FlappyBirdEngine, Bird, SCREEN_WIDTH, GROUND_Y, PIPE_GAP
 from src.game.ui import BIRD_COLORS, ALGO_DISPLAY, REWARD_DISPLAY, STRATEGY_DISPLAY
-from src.game.strategies import STRATEGY_MAP, ExplorationStrategy
+from src.game.strategies import STRATEGY_MAP, STRATEGY_OPTIONS, ExplorationStrategy
 
 AGENT_MAP = {
     "q_learning": QLearningAgent,
@@ -48,6 +48,7 @@ class BirdEntry:
     total_pipes: int = 0
     prev_obs: np.ndarray | None = field(default=None, init=False)
     last_exploring: bool = field(default=True, init=False)
+    last_q_values: np.ndarray | None = field(default=None, init=False)
 
     def __post_init__(self):
         agent_cls = AGENT_MAP[self.algo]
@@ -76,6 +77,15 @@ class BirdEntry:
     @property
     def display_name(self) -> str:
         return f"{ALGO_DISPLAY[self.algo]} {REWARD_DISPLAY[self.reward]} [{STRATEGY_DISPLAY[self.strategy_name]}]"
+
+    @property
+    def q_display(self) -> str:
+        """Format Q-values for display."""
+        if self.last_q_values is None:
+            return ""
+        q = self.last_q_values
+        best = "noop" if q[0] >= q[1] else "FLAP"
+        return f"Q:{q[0]:+.1f}|{q[1]:+.1f} -> {best}"
 
 
 class RaceManager:
@@ -115,6 +125,26 @@ class RaceManager:
             for i, entry in enumerate(self.entries):
                 entry.bird = self.engine.birds[i]
 
+    def cycle_strategy(self, index: int):
+        """Cycle the exploration strategy for a bird."""
+        if 0 <= index < len(self.entries):
+            entry = self.entries[index]
+            current_idx = STRATEGY_OPTIONS.index(entry.strategy_name)
+            next_idx = (current_idx + 1) % len(STRATEGY_OPTIONS)
+            entry.strategy_name = STRATEGY_OPTIONS[next_idx]
+            entry.strategy = STRATEGY_MAP[entry.strategy_name]()
+
+    def halve_epsilon(self, index: int):
+        """Halve epsilon for a bird — fast-track to exploitation."""
+        if 0 <= index < len(self.entries):
+            entry = self.entries[index]
+            entry.agent.epsilon = max(0.01, entry.agent.epsilon / 2)
+
+    def boost_all(self):
+        """Set all birds' epsilon to 0.05 — skip most exploration."""
+        for entry in self.entries:
+            entry.agent.epsilon = 0.05
+
     def reset_round(self):
         self.engine.reset()
         for entry in self.entries:
@@ -129,6 +159,12 @@ class RaceManager:
         for entry in self.entries:
             if entry.bird.alive:
                 obs = self.engine.get_observation(entry.bird)
+                # Get Q-values for display
+                if hasattr(entry.agent, '_get_q_values'):
+                    entry.last_q_values = entry.agent._get_q_values(obs)
+                elif hasattr(entry.agent, 'q_table') and hasattr(entry.agent, '_discretize'):
+                    key = entry.agent._discretize(obs)
+                    entry.last_q_values = entry.agent.q_table[key].copy()
                 # Exploration with strategy vs exploitation with learned policy
                 exploring = np.random.random() < entry.agent.epsilon
                 if exploring:
@@ -167,7 +203,7 @@ class RaceManager:
 
     def get_bird_configs(self) -> dict:
         configs = {}
-        for entry in self.entries:
+        for i, entry in enumerate(self.entries):
             configs[entry.bird.bird_id] = {
                 "name": entry.display_name,
                 "algo": ALGO_DISPLAY[entry.algo],
@@ -177,5 +213,7 @@ class RaceManager:
                 "total_pipes": entry.total_pipes,
                 "epsilon": round(entry.agent.epsilon, 3),
                 "exploring": entry.last_exploring,
+                "q_display": entry.q_display,
+                "index": i,
             }
         return configs

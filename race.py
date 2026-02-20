@@ -10,16 +10,15 @@ def main():
     renderer = GameRenderer()
     dialog = AddBirdDialog(window_width=WINDOW_WIDTH, window_height=WINDOW_HEIGHT)
 
-    # Start with 3 default birds showcasing different strategies
+    # Start with 3 birds showcasing different strategies (same algo/reward)
     manager.add_bird(algo="dqn", reward="smart", strategy="guided")
-    manager.add_bird(algo="dqn", reward="smart", strategy="random")
     manager.add_bird(algo="dqn", reward="smart", strategy="heuristic")
+    manager.add_bird(algo="dqn", reward="smart", strategy="random")
     manager.reset_round()
 
     buttons = [
         {"label": "+ Add Bird", "action": "add_bird", "rect": None},
-        {"label": "- Remove Bird", "action": "remove_bird", "rect": None},
-        {"label": "Speed: x1", "action": "speed", "rect": None},
+        {"label": "Boost All (e=0.05)", "action": "boost", "rect": None},
         {"label": "Pause", "action": "pause", "rect": None},
     ]
 
@@ -34,11 +33,13 @@ def main():
                 elif event.key == pygame.K_SPACE:
                     manager.paused = not manager.paused
                 elif event.key == pygame.K_UP:
-                    manager.speed = min(manager.speed * 2, 64)
+                    renderer.speed = min(renderer.speed * 2, 64)
                 elif event.key == pygame.K_DOWN:
-                    manager.speed = max(manager.speed // 2, 1)
+                    renderer.speed = max(renderer.speed // 2, 1)
+                elif event.key == pygame.K_b:
+                    manager.boost_all()
 
-            # Forward mouse events to dialog (needed for slider dragging)
+            # Forward all mouse events to renderer + dialog
             elif event.type in (
                 pygame.MOUSEBUTTONDOWN, pygame.MOUSEMOTION, pygame.MOUSEBUTTONUP,
             ):
@@ -51,30 +52,39 @@ def main():
                         manager.reset_round()
                     elif result == "cancel":
                         dialog.hide()
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    mx, my = event.pos
-                    for btn in buttons:
-                        if btn["rect"] and btn["rect"].collidepoint(
-                            mx - 288, my
-                        ):
-                            if btn["action"] == "add_bird":
-                                dialog.show()
-                            elif btn["action"] == "remove_bird":
-                                if manager.entries:
-                                    manager.remove_bird(len(manager.entries) - 1)
-                                    if manager.entries:
-                                        manager.reset_round()
-                            elif btn["action"] == "speed":
-                                if manager.speed < 64:
-                                    manager.speed *= 2
-                                else:
-                                    manager.speed = 1
-                            elif btn["action"] == "pause":
-                                manager.paused = not manager.paused
+                else:
+                    # Panel interactive controls (speed slider, per-bird buttons)
+                    action = renderer.handle_event(event)
+                    if action:
+                        action_type, bird_idx = action
+                        if action_type == "cycle_strategy":
+                            manager.cycle_strategy(bird_idx)
+                        elif action_type == "halve_epsilon":
+                            manager.halve_epsilon(bird_idx)
+                        elif action_type == "remove":
+                            manager.remove_bird(bird_idx)
+                            if manager.entries:
+                                manager.reset_round()
+
+                    # Check main buttons (only on click)
+                    if event.type == pygame.MOUSEBUTTONDOWN and not action:
+                        mx, my = event.pos
+                        for btn in buttons:
+                            if btn["rect"] and btn["rect"].collidepoint(
+                                mx - 288, my
+                            ):
+                                if btn["action"] == "add_bird":
+                                    dialog.show()
+                                elif btn["action"] == "boost":
+                                    manager.boost_all()
+                                elif btn["action"] == "pause":
+                                    manager.paused = not manager.paused
+
+        # Sync speed from slider
+        manager.speed = renderer.speed
 
         # Update button labels
-        buttons[2]["label"] = f"Speed: x{manager.speed}"
-        buttons[3]["label"] = "Resume" if manager.paused else "Pause"
+        buttons[2]["label"] = "Resume" if manager.paused else "Pause"
 
         # Game logic
         if not manager.paused:
@@ -88,7 +98,7 @@ def main():
         bird_configs = manager.get_bird_configs()
         renderer.draw(manager.engine, manager.speed, manager.paused, bird_configs, buttons)
 
-        # Draw dialog on top if active
+        # Draw dialog on top
         if dialog.active:
             dialog.draw(renderer.screen)
             pygame.display.flip()
