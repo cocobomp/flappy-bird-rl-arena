@@ -1,0 +1,18 @@
+agent: dqn
+observation: simple
+reward: basic
+hyperparams:
+  lr: 0.0005
+  gamma: 0.99
+  epsilon_start: 1.0
+  epsilon_end: 0.01
+  epsilon_decay: 0.995
+  hidden_dims: [128, 128]
+  batch_size: 64
+  buffer_size: 50000
+  tau: 0.005
+training:
+  episodes: 1000
+  max_steps: 500
+  save_every: 100
+  log_every: 10
