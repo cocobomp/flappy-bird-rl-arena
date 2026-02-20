@@ -150,6 +150,19 @@ class DQNAgent(BaseAgent):
             q_values = self.q_net(state_t)
         return q_values.cpu().numpy().squeeze(0)
 
+    def get_activations(self, state: np.ndarray) -> list[np.ndarray]:
+        """Get activations at each layer for visualization."""
+        state_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        activations = [state]  # input layer
+        with torch.no_grad():
+            x = state_t
+            for layer in self.q_net.network:
+                x = layer(x)
+                if isinstance(layer, nn.ReLU):
+                    activations.append(x.cpu().numpy().squeeze(0))
+            activations.append(x.cpu().numpy().squeeze(0))  # output
+        return activations
+
     def select_action(self, state: np.ndarray, training: bool = True) -> int:
         """Epsilon-greedy action selection using Q-values.
 

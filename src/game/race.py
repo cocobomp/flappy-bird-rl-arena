@@ -54,6 +54,7 @@ class BirdEntry:
     prev_obs: np.ndarray | None = field(default=None, init=False)
     last_exploring: bool = field(default=True, init=False)
     last_q_values: np.ndarray | None = field(default=None, init=False)
+    last_activations: list | None = field(default=None, init=False)
 
     def __post_init__(self):
         agent_cls = AGENT_MAP[self.algo]
@@ -112,6 +113,8 @@ class RaceManager:
         self.evolution_enabled = False
         self.mutation_scale = 0.02
         self._color_index = 0
+        self.round_scores: list[int] = []
+        self.ghost_trail: list[float] = []
 
     def add_bird(self, algo: str, reward: str, strategy: str = "guided",
                  epsilon_start: float = 0.3, lr: float = 5e-4,
@@ -179,6 +182,13 @@ class RaceManager:
     def reset_round(self):
         if self.evolution_enabled:
             self.evolve()
+        if self.entries:
+            best = max(self.entries, key=lambda e: (e.bird.score, e.bird.steps_alive))
+            self.round_scores.append(best.bird.score)
+            if len(self.round_scores) > 100:
+                self.round_scores.pop(0)
+            if best.bird.score > 0 and best.bird.score >= max((e.best_score for e in self.entries), default=0):
+                self.ghost_trail = list(best.bird.trail)
         self.engine.reset()
         for entry in self.entries:
             entry.prev_obs = self.engine.get_observation(entry.bird)
@@ -191,9 +201,11 @@ class RaceManager:
         for entry in self.entries:
             if entry.bird.alive:
                 obs = self.engine.get_observation(entry.bird)
-                # Q-values for display
+                # Q-values + activations for display
                 if hasattr(entry.agent, '_get_q_values'):
                     entry.last_q_values = entry.agent._get_q_values(obs)
+                    if hasattr(entry.agent, 'get_activations'):
+                        entry.last_activations = entry.agent.get_activations(obs)
                 elif hasattr(entry.agent, 'q_table') and hasattr(entry.agent, '_discretize'):
                     key = entry.agent._discretize(obs)
                     entry.last_q_values = entry.agent.q_table[key].copy()
@@ -249,6 +261,9 @@ class RaceManager:
                 "q_display": entry.q_display,
                 "generation": entry.generation,
                 "parent_color": entry.parent_color,
+                "activations": entry.last_activations,
                 "index": i,
             }
+        configs["_round_scores"] = self.round_scores
+        configs["_ghost_trail"] = self.ghost_trail
         return configs

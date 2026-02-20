@@ -31,6 +31,7 @@ class Bird:
     def __init__(self, bird_id: int, color: tuple[int, int, int]):
         self.bird_id = bird_id
         self.color = color
+        self.trail: list[float] = []
         self.reset()
 
     def reset(self):
@@ -40,6 +41,7 @@ class Bird:
         self.alive = True
         self.score = 0
         self.steps_alive = 0
+        self.trail = []
 
     def flap(self):
         if self.alive and self.y > -2 * PLAYER_HEIGHT:
@@ -55,6 +57,10 @@ class Bird:
         self.y += min(self.vel_y, ground_y - self.y - PLAYER_HEIGHT)
         self.y = max(self.y, 0)
         self.steps_alive += 1
+        if self.alive:
+            self.trail.append(self.y)
+            if len(self.trail) > 50:
+                self.trail.pop(0)
 
     @property
     def rect(self) -> tuple[float, float, int, int]:

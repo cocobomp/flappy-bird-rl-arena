@@ -1,9 +1,11 @@
 """Pygame renderer for the multi-bird Flappy Bird game."""
+import numpy as np
 import pygame
 from src.game.engine import (
     FlappyBirdEngine, Bird,
     SCREEN_WIDTH, SCREEN_HEIGHT, GROUND_Y,
     PLAYER_WIDTH, PLAYER_HEIGHT, PIPE_WIDTH, PIPE_HEIGHT, PIPE_GAP,
+    PIPE_VEL_X,
 )
 from src.game.ui import Slider
 
@@ -55,58 +57,29 @@ STRATEGY_TOOLTIPS = {
     "Guided": "Gravity loin + Heuristique pres",
 }
 
-# Education panel content
+# Education panel content (condensed to make room for visualizations)
 EDUCATION_SECTIONS = [
-    ("COMMENT CA MARCHE", None, [
-        "Chaque oiseau est un agent RL",
-        "qui apprend a jouer en jouant.",
-        "",
-    ]),
-    ("Physique du jeu", WARNING_COLOR, [
-        "Flap=-9 (fort!) Gravite=+1",
-        "50% flap = monte au plafond!",
-        "",
-    ]),
-    ("Strategies", SECTION_COLOR, [
-        "Random  50/50 (nul!)",
-        "Gravity 12% flap seulement",
-        "Heurist PD: position+velocite",
-        "Guided  Gravity+Heuristique",
-        "",
-    ]),
-    ("Parametres", SECTION_COLOR, [
-        "Epsilon = taux exploration",
-        "LR      = vitesse apprentissage",
-        "Decay   = reduction epsilon",
-        "Mort    = penalite deces",
-        "Porte   = bonus par tuyau",
-        "Survie  = bonus par frame",
-        "Seuil   = sensibilite flap",
-        "Bruit   = aleatoire strategie",
-        "",
-    ]),
-    ("Entrainement", SECTION_COLOR, [
-        "EXPLORE = utilise strategie",
-        "APPREND = utilise le reseau!",
-        "Q-values: quand elles varient",
-        "le reseau a appris!",
-        "",
-    ]),
-    ("Evolution", SECTION_COLOR, [
-        "Quand activee, a chaque round:",
-        "les pires oiseaux copient les",
-        "poids des meilleurs + mutation.",
-        "G:N = generation (nb copies).",
-        "Le rond = couleur du parent.",
+    ("CERVEAU DE L'OISEAU", None, []),
+    ("Apprentissage", SECTION_COLOR, [
+        "EXPLORE = strategie d'exploration",
+        "APPREND = reseau de neurones!",
+        "Evolution = copie du meilleur",
         "",
     ]),
     ("Conseils", SECTION_COLOR, [
-        "* Guided + Smart = apprend vite",
-        "* Vitesse x32-x64 puis [e/2]",
-        "* Evolution ON + 4-6 oiseaux",
-        "  = apprentissage collectif!",
+        "Vitesse x32-x64 puis [e/2]",
+        "Evolution ON + 5 oiseaux",
     ]),
 ]
+
+# Neural network visualization config
+NN_LAYER_LABELS = [
+    ["y", "vel", "dist", "gap"],       # input
+    None,                                # hidden1 (sampled)
+    None,                                # hidden2 (sampled)
+    ["noop", "FLAP"],                    # output
+]
+NN_SAMPLE_NODES = 6  # how many nodes to show per hidden layer
 
 
 class GameRenderer:
@@ -159,16 +132,43 @@ class GameRenderer:
         """Draw the full frame: game area + panel + education."""
         self._hover_rects = []
         self._bird_buttons = []
-        self._draw_game(engine)
+        self._draw_game(engine, bird_configs)
         self._draw_panel(engine, paused, bird_configs, buttons)
-        self._draw_education_panel()
+        self._draw_education_panel(bird_configs)
         self._draw_tooltips()
         pygame.display.flip()
 
-    def _draw_game(self, engine: FlappyBirdEngine):
-        """Draw game area: sky, pipes, birds, ground."""
+    def _draw_game(self, engine: FlappyBirdEngine, bird_configs: dict = None):
+        """Draw game area: sky, pipes, birds, trails, ghost, ground."""
         game_surface = self.screen.subsurface((0, 0, SCREEN_WIDTH, SCREEN_HEIGHT))
         game_surface.fill(SKY_COLOR)
+
+        # Ghost trail from best ever run
+        ghost_trail = (bird_configs or {}).get("_ghost_trail", [])
+        if ghost_trail and engine.frame < len(ghost_trail):
+            gy = int(ghost_trail[engine.frame])
+            ghost_surf = pygame.Surface((PLAYER_WIDTH, PLAYER_HEIGHT), pygame.SRCALPHA)
+            pygame.draw.ellipse(ghost_surf, (255, 255, 255, 60), (0, 0, PLAYER_WIDTH, PLAYER_HEIGHT))
+            game_surface.blit(ghost_surf, (int(engine.birds[0].x if engine.birds else 57), gy))
+            # Ghost label
+            gl = self.font_tiny.render("RECORD", True, (255, 255, 255))
+            game_surface.blit(gl, (int((engine.birds[0].x if engine.birds else 57)) - 2, gy - 10))
+
+        # Bird trails (fading dots behind each bird)
+        trail_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        for bird in engine.birds:
+            if not bird.trail:
+                continue
+            n = len(bird.trail)
+            for i, ty in enumerate(bird.trail):
+                age = n - 1 - i  # 0 = newest
+                alpha = max(20, 180 - age * 4)
+                tx = int(bird.x - (age * abs(PIPE_VEL_X)))
+                if tx < 0:
+                    continue
+                r, g, b = bird.color
+                pygame.draw.circle(trail_surf, (r, g, b, alpha), (tx, int(ty) + PLAYER_HEIGHT // 2), 2)
+        game_surface.blit(trail_surf, (0, 0))
 
         for pipe in engine.pipes:
             px = int(pipe["x"])
@@ -360,31 +360,215 @@ class GameRenderer:
             panel.blit(txt, (tx, ty))
             y += 32
 
-    def _draw_education_panel(self):
-        """Draw the right-side education/pedagogy panel."""
+    def _draw_education_panel(self, bird_configs: dict = None):
+        """Draw the right-side panel: neural net viz + score graph + tips."""
         edu_x = SCREEN_WIDTH + PANEL_WIDTH
         edu = self.screen.subsurface((edu_x, 0, EDUCATION_WIDTH, WINDOW_HEIGHT))
         edu.fill(EDU_BG)
+        bird_configs = bird_configs or {}
 
-        y = 10
+        y = 6
+        # Title
         for section_title, title_color, lines in EDUCATION_SECTIONS:
             if title_color is None:
                 t = self.font_large.render(section_title, True, HIGHLIGHT_COLOR)
                 edu.blit(t, (10, y))
-                y += 22
+                y += 20
             else:
                 t = self.font.render(f"* {section_title}", True, title_color)
                 edu.blit(t, (10, y))
-                y += 16
+                y += 14
             for line in lines:
                 if line == "":
-                    y += 3
+                    y += 2
                     continue
                 t = self.font_tiny.render(line, True, TEXT_COLOR)
                 edu.blit(t, (14, y))
-                y += 12
+                y += 11
+
+        # --- Neural Network Visualization ---
+        activations = None
+        best_bird_id = None
+        best_score = -1
+        for k, v in bird_configs.items():
+            if isinstance(k, str) and k.startswith("_"):
+                continue
+            if isinstance(v, dict) and v.get("activations"):
+                sc = v.get("best_score", 0)
+                if sc > best_score:
+                    best_score = sc
+                    activations = v["activations"]
+                    best_bird_id = k
+
+        if activations and len(activations) >= 3:
+            self._draw_neural_net(edu, 10, y, EDUCATION_WIDTH - 20, 200, activations)
+            y += 205
+        else:
+            # Placeholder
+            t = self.font_small.render("(en attente du reseau...)", True, DIM_COLOR)
+            edu.blit(t, (14, y + 10))
+            y += 35
 
         pygame.draw.line(edu, (60, 60, 80), (10, y), (EDUCATION_WIDTH - 10, y))
+        y += 6
+
+        # --- Score History Graph ---
+        round_scores = bird_configs.get("_round_scores", [])
+        self._draw_score_graph(edu, 10, y, EDUCATION_WIDTH - 20, 120, round_scores)
+        y += 130
+
+        pygame.draw.line(edu, (60, 60, 80), (10, y), (EDUCATION_WIDTH - 10, y))
+
+    def _draw_neural_net(self, surface, x, y, w, h, activations):
+        """Draw a live neural network diagram with colored activations."""
+        # activations: [input(4), hidden1(128), hidden2(128), output(2)]
+        n_layers = len(activations)
+        if n_layers < 2:
+            return
+
+        # Determine nodes per layer for display
+        display_nodes = []
+        for i, act in enumerate(activations):
+            act = np.asarray(act)
+            if len(act) <= NN_SAMPLE_NODES:
+                display_nodes.append(act)
+            else:
+                # Sample evenly spaced nodes
+                indices = np.linspace(0, len(act) - 1, NN_SAMPLE_NODES, dtype=int)
+                display_nodes.append(act[indices])
+
+        # Layout
+        layer_x_positions = []
+        margin_x = 30
+        usable_w = w - 2 * margin_x
+        for i in range(n_layers):
+            lx = x + margin_x + int(i * usable_w / max(1, n_layers - 1))
+            layer_x_positions.append(lx)
+
+        margin_y = 25
+        usable_h = h - 2 * margin_y
+
+        # Draw label
+        t = self.font.render("Reseau de neurones (live)", True, SECTION_COLOR)
+        surface.blit(t, (x + 5, y + 2))
+
+        # Draw connections first (behind nodes)
+        for li in range(n_layers - 1):
+            n1 = len(display_nodes[li])
+            n2 = len(display_nodes[li + 1])
+            x1 = layer_x_positions[li]
+            x2 = layer_x_positions[li + 1]
+            for i in range(n1):
+                y1 = y + margin_y + int(i * usable_h / max(1, n1 - 1))
+                val1 = float(display_nodes[li][i])
+                for j in range(n2):
+                    y2 = y + margin_y + int(j * usable_h / max(1, n2 - 1))
+                    # Connection brightness based on both activations
+                    val2 = float(display_nodes[li + 1][j])
+                    strength = min(1.0, (abs(val1) + abs(val2)) / 4.0)
+                    alpha = int(20 + strength * 60)
+                    color = (60 + int(strength * 80), 60 + int(strength * 80), 80 + int(strength * 100))
+                    pygame.draw.line(surface, color, (x1, y1), (x2, y2), 1)
+
+        # Draw nodes
+        labels = NN_LAYER_LABELS
+        for li, nodes in enumerate(display_nodes):
+            n = len(nodes)
+            lx = layer_x_positions[li]
+            for i, val in enumerate(nodes):
+                ny = y + margin_y + int(i * usable_h / max(1, n - 1))
+                val = float(val)
+                # Color: blue (negative/zero) -> green (small positive) -> red (high positive)
+                intensity = min(1.0, abs(val) / 2.0)
+                if val > 0:
+                    color = (int(50 + 200 * intensity), int(200 - 100 * intensity), 50)
+                else:
+                    color = (50, int(80 + 100 * intensity), int(50 + 200 * intensity))
+                radius = 5 + int(intensity * 4)
+                pygame.draw.circle(surface, color, (lx, ny), radius)
+                pygame.draw.circle(surface, (180, 180, 200), (lx, ny), radius, 1)
+
+                # Labels for input/output layers
+                if li < len(labels) and labels[li] and i < len(labels[li]):
+                    lbl = self.font_tiny.render(labels[li][i], True, TEXT_COLOR)
+                    if li == 0:
+                        surface.blit(lbl, (lx - lbl.get_width() - 8, ny - 5))
+                    else:
+                        surface.blit(lbl, (lx + 10, ny - 5))
+
+        # Layer labels
+        layer_names = ["Entree", "Cache 1", "Cache 2", "Sortie"]
+        for i, lx in enumerate(layer_x_positions):
+            if i < len(layer_names):
+                lt = self.font_tiny.render(layer_names[i], True, DIM_COLOR)
+                surface.blit(lt, (lx - lt.get_width() // 2, y + h - 10))
+
+    def _draw_score_graph(self, surface, x, y, w, h, scores):
+        """Draw a line chart of score history."""
+        # Title
+        t = self.font.render("Progression des scores", True, SECTION_COLOR)
+        surface.blit(t, (x + 5, y + 2))
+
+        graph_y = y + 18
+        graph_h = h - 24
+        graph_w = w - 10
+        graph_x = x + 5
+
+        # Background
+        bg = pygame.Rect(graph_x, graph_y, graph_w, graph_h)
+        pygame.draw.rect(surface, (15, 18, 28), bg, border_radius=3)
+        pygame.draw.rect(surface, (50, 50, 70), bg, 1, border_radius=3)
+
+        if not scores:
+            t = self.font_tiny.render("(en attente de donnees...)", True, DIM_COLOR)
+            surface.blit(t, (graph_x + 10, graph_y + graph_h // 2 - 5))
+            return
+
+        # Grid lines
+        max_score = max(max(scores), 1)
+        for i in range(5):
+            gy = graph_y + int(i * graph_h / 4)
+            pygame.draw.line(surface, (35, 38, 50), (graph_x, gy), (graph_x + graph_w, gy), 1)
+
+        # Y-axis labels
+        for i in range(5):
+            val = max_score * (4 - i) / 4
+            gy = graph_y + int(i * graph_h / 4)
+            lt = self.font_tiny.render(f"{val:.0f}", True, DIM_COLOR)
+            surface.blit(lt, (graph_x + 2, gy - 4))
+
+        # Plot line
+        n = len(scores)
+        if n < 2:
+            return
+        points = []
+        for i, s in enumerate(scores):
+            px = graph_x + int(i * graph_w / (n - 1))
+            py = graph_y + graph_h - int(s * graph_h / max_score)
+            py = max(graph_y, min(graph_y + graph_h, py))
+            points.append((px, py))
+
+        # Gradient fill under the line
+        for i in range(len(points) - 1):
+            x1, y1 = points[i]
+            x2, y2 = points[i + 1]
+            bottom = graph_y + graph_h
+            fill_color = (30, 100, 60, 80)
+            fill_surf = pygame.Surface((max(1, x2 - x1), bottom - min(y1, y2)), pygame.SRCALPHA)
+            fill_surf.fill(fill_color)
+            surface.blit(fill_surf, (x1, min(y1, y2)))
+
+        # Line
+        if len(points) >= 2:
+            pygame.draw.lines(surface, HIGHLIGHT_COLOR, False, points, 2)
+
+        # Current score dot
+        pygame.draw.circle(surface, (255, 255, 100), points[-1], 4)
+
+        # Max score label
+        best = max(scores)
+        lt = self.font_small.render(f"Best: {best}", True, HIGHLIGHT_COLOR)
+        surface.blit(lt, (graph_x + graph_w - lt.get_width() - 4, graph_y + 2))
 
     def _draw_tooltips(self):
         """Draw tooltip if mouse hovers over a label."""
