@@ -1,20 +1,19 @@
 """Exploration strategies for the multi-bird RL race.
 
-During epsilon-greedy training, the standard approach picks a random action
-with probability epsilon. In Flappy Bird, this is catastrophic:
+Physics recap (why this matters):
+    flap = sets vel_y to -9 (strong upward impulse)
+    gravity = +1 per frame
+    One flap lifts the bird ~45 pixels before it starts falling.
+    Pipe gap = 100 pixels.
 
-    flap force = -9 (strong upward)
-    gravity    = +1 (weak downward)
-
-With 50/50 random, the bird averages velocity ~ -4 per frame -> flies into
-the ceiling every time.  These strategies replace the random action with
-smarter exploration so birds actually survive long enough to learn.
+So flapping is a BIG action. Smart strategies must account for velocity
+to avoid constant overshooting (which makes birds look "dumb").
 
 Observation format: [player_y, velocity, dist_next, gap_center]
-  - player_y:   bird vertical position / SCREEN_HEIGHT  (0=top, ~0.8=ground)
-  - velocity:   bird vel_y / MAX_VEL_Y  (negative=going up, positive=going down)
-  - dist_next:  distance to next pipe / SCREEN_WIDTH  (0=at pipe, 1=far away)
-  - gap_center: center of pipe gap / SCREEN_HEIGHT
+  player_y:  bird position / SCREEN_HEIGHT  (0=top, ~0.8=ground)
+  velocity:  bird vel_y / MAX_VEL_Y  (negative=up, positive=down)
+  dist_next: distance to pipe / SCREEN_WIDTH  (0=at pipe, 1=far)
+  gap_center: gap center / SCREEN_HEIGHT
 """
 
 from abc import ABC, abstractmethod
@@ -29,31 +28,28 @@ class ExplorationStrategy(ABC):
 
     @abstractmethod
     def explore(self, obs: np.ndarray) -> int:
-        """Choose an exploration action given the current observation.
-
-        Returns:
-            0 (no flap) or 1 (flap)
-        """
         pass
 
 
 class RandomStrategy(ExplorationStrategy):
-    """Pure random: 50/50 flap.  BAD for Flappy Bird -- included as a demo
-    of why naive exploration fails."""
+    """Pure random 50/50.  Terrible for Flappy Bird — demo only."""
 
     name = "Random"
+
+    def __init__(self, **_kwargs):
+        pass
 
     def explore(self, obs: np.ndarray) -> int:
         return int(np.random.randint(2))
 
 
 class GravityAwareStrategy(ExplorationStrategy):
-    """Biased random: low flap probability to counter the physics asymmetry.
-    Since flap (-9) >> gravity (+1), we only flap ~12% of the time."""
+    """Biased random with configurable flap probability.
+    Default 12% compensates for flap(-9) >> gravity(+1)."""
 
     name = "Gravity"
 
-    def __init__(self, flap_prob: float = 0.12):
+    def __init__(self, flap_prob: float = 0.12, **_kwargs):
         self.flap_prob = flap_prob
 
     def explore(self, obs: np.ndarray) -> int:
@@ -61,34 +57,36 @@ class GravityAwareStrategy(ExplorationStrategy):
 
 
 class HeuristicStrategy(ExplorationStrategy):
-    """Velocity-aware rule: flap if below the gap AND not already rising fast.
+    """PD-controller heuristic: accounts for POSITION and VELOCITY.
 
-    Key insight: a single flap gives vel=-9 which lasts many frames.
-    So we only flap when truly needed:
-      - Bird is below gap center AND not already going up fast -> flap
-      - Bird is above gap center OR already rising -> don't flap
+    urgency = (how far below gap) - damping * (how fast going up)
 
-    This produces smooth, intelligent trajectories that look like real play.
+    Only flaps when urgency exceeds threshold. This prevents the
+    constant overshoot that makes birds look stupid:
+    - If below gap but already rising fast → DON'T flap (momentum is enough)
+    - If below gap and falling → flap (need correction)
+    - If above gap → never flap (let gravity bring you back)
+
+    One flap = 45px rise. With threshold ~0.04 (~20px), the bird
+    oscillates smoothly within the 100px gap.
     """
 
     name = "Heuristic"
 
-    def __init__(self, noise: float = 0.10):
+    def __init__(self, noise: float = 0.10, threshold: float = 0.04, **_kwargs):
         self.noise = noise
+        self.threshold = threshold
 
     def explore(self, obs: np.ndarray) -> int:
         player_y = obs[0]
-        velocity = obs[1]   # negative = going up
+        velocity = obs[1]     # negative = going up
         gap_center = obs[3]
 
-        diff = player_y - gap_center  # positive = below gap
+        diff = player_y - gap_center      # positive = below gap
+        upward = max(0.0, -velocity)      # how fast going up (always >= 0)
+        urgency = diff - 0.5 * upward     # damped position error
 
-        # Flap only when below gap AND not already rising
-        if diff > 0.02 and velocity > -0.3:
-            action = 1
-        # Close to gap and moving up gently: let gravity do the work
-        else:
-            action = 0
+        action = 1 if urgency > self.threshold else 0
 
         if np.random.random() < self.noise:
             return 1 - action
@@ -96,23 +94,22 @@ class HeuristicStrategy(ExplorationStrategy):
 
 
 class GuidedStrategy(ExplorationStrategy):
-    """Smart combo: gravity-aware when far from a pipe, heuristic when near.
+    """Best of both: gravity-aware far from pipe, PD-heuristic near pipe.
 
-    Far from pipe: just stay alive with low flap rate.
-    Near pipe: use velocity-aware heuristic to target the gap precisely.
+    Far from pipe: stay alive with low flap rate.
+    Near pipe: use velocity-aware heuristic to thread the gap.
     """
 
     name = "Guided"
 
     def __init__(self, flap_prob: float = 0.12, noise: float = 0.10,
-                 near_threshold: float = 0.5):
-        self.gravity = GravityAwareStrategy(flap_prob)
-        self.heuristic = HeuristicStrategy(noise)
-        self.near_threshold = near_threshold
+                 threshold: float = 0.04, **_kwargs):
+        self.gravity = GravityAwareStrategy(flap_prob=flap_prob)
+        self.heuristic = HeuristicStrategy(noise=noise, threshold=threshold)
 
     def explore(self, obs: np.ndarray) -> int:
-        dist = obs[2]  # dist_next normalised [0, 1]
-        if dist < self.near_threshold:
+        dist = obs[2]
+        if dist < 0.5:
             return self.heuristic.explore(obs)
         return self.gravity.explore(obs)
 

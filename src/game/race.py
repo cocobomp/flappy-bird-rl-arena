@@ -40,6 +40,9 @@ class BirdEntry:
     epsilon_decay: float = 0.998
     death_penalty: float = 5.0
     pipe_bonus: float = 10.0
+    alive_reward: float = 0.2
+    flap_threshold: float = 0.04
+    strategy_noise: float = 0.10
     agent: BaseAgent = field(init=False)
     reward_fn: RewardFunction = field(init=False)
     strategy: ExplorationStrategy = field(init=False)
@@ -71,8 +74,16 @@ class BirdEntry:
             self.reward_fn = SmartReward(death_penalty=self.death_penalty)
         else:
             self.reward_fn = REWARD_MAP[self.reward]()
-        strategy_cls = STRATEGY_MAP[self.strategy_name]
-        self.strategy = strategy_cls()
+        self._create_strategy()
+
+    def _create_strategy(self):
+        """Build the exploration strategy with current params."""
+        cls = STRATEGY_MAP[self.strategy_name]
+        self.strategy = cls(
+            noise=self.strategy_noise,
+            threshold=self.flap_threshold,
+            flap_prob=0.12,
+        )
 
     @property
     def display_name(self) -> str:
@@ -80,12 +91,11 @@ class BirdEntry:
 
     @property
     def q_display(self) -> str:
-        """Format Q-values for display."""
         if self.last_q_values is None:
             return ""
         q = self.last_q_values
         best = "noop" if q[0] >= q[1] else "FLAP"
-        return f"Q:{q[0]:+.1f}|{q[1]:+.1f} -> {best}"
+        return f"Q:{q[0]:+.1f}|{q[1]:+.1f}->{best}"
 
 
 class RaceManager:
@@ -95,7 +105,6 @@ class RaceManager:
         self.engine = FlappyBirdEngine()
         self.entries: list[BirdEntry] = []
         self.render_enabled = render
-        self.renderer = None
         self.speed = 1
         self.paused = False
         self._color_index = 0
@@ -103,14 +112,17 @@ class RaceManager:
     def add_bird(self, algo: str, reward: str, strategy: str = "guided",
                  epsilon_start: float = 0.8, lr: float = 5e-4,
                  epsilon_decay: float = 0.998, death_penalty: float = 5.0,
-                 pipe_bonus: float = 10.0) -> BirdEntry:
+                 pipe_bonus: float = 10.0, alive_reward: float = 0.2,
+                 flap_threshold: float = 0.04, strategy_noise: float = 0.10,
+                 ) -> BirdEntry:
         color = BIRD_COLORS[self._color_index % len(BIRD_COLORS)]
         self._color_index += 1
         entry = BirdEntry(
             algo=algo, reward=reward, strategy_name=strategy, color=color,
             epsilon_start=epsilon_start, lr=lr,
             epsilon_decay=epsilon_decay, death_penalty=death_penalty,
-            pipe_bonus=pipe_bonus,
+            pipe_bonus=pipe_bonus, alive_reward=alive_reward,
+            flap_threshold=flap_threshold, strategy_noise=strategy_noise,
         )
         bird = self.engine.add_bird(color=color)
         entry.bird = bird
@@ -126,22 +138,18 @@ class RaceManager:
                 entry.bird = self.engine.birds[i]
 
     def cycle_strategy(self, index: int):
-        """Cycle the exploration strategy for a bird."""
         if 0 <= index < len(self.entries):
             entry = self.entries[index]
-            current_idx = STRATEGY_OPTIONS.index(entry.strategy_name)
-            next_idx = (current_idx + 1) % len(STRATEGY_OPTIONS)
-            entry.strategy_name = STRATEGY_OPTIONS[next_idx]
-            entry.strategy = STRATEGY_MAP[entry.strategy_name]()
+            cur = STRATEGY_OPTIONS.index(entry.strategy_name)
+            entry.strategy_name = STRATEGY_OPTIONS[(cur + 1) % len(STRATEGY_OPTIONS)]
+            entry._create_strategy()
 
     def halve_epsilon(self, index: int):
-        """Halve epsilon for a bird — fast-track to exploitation."""
         if 0 <= index < len(self.entries):
-            entry = self.entries[index]
-            entry.agent.epsilon = max(0.01, entry.agent.epsilon / 2)
+            self.entries[index].agent.epsilon = max(
+                0.01, self.entries[index].agent.epsilon / 2)
 
     def boost_all(self):
-        """Set all birds' epsilon to 0.05 — skip most exploration."""
         for entry in self.entries:
             entry.agent.epsilon = 0.05
 
@@ -151,7 +159,6 @@ class RaceManager:
             entry.prev_obs = self.engine.get_observation(entry.bird)
 
     def step_frame(self) -> bool:
-        """Run one frame of the game. Returns True if round is over."""
         if not self.entries:
             return True
 
@@ -159,7 +166,7 @@ class RaceManager:
         for entry in self.entries:
             if entry.bird.alive:
                 obs = self.engine.get_observation(entry.bird)
-                # Get Q-values for display
+                # Q-values for display
                 if hasattr(entry.agent, '_get_q_values'):
                     entry.last_q_values = entry.agent._get_q_values(obs)
                 elif hasattr(entry.agent, 'q_table') and hasattr(entry.agent, '_discretize'):
@@ -175,7 +182,6 @@ class RaceManager:
                 actions[entry.bird.bird_id] = action
                 entry.prev_obs = obs
 
-        # Track scores before step to detect pipe passing
         prev_scores = {e.bird.bird_id: e.bird.score for e in self.entries}
 
         obs_dict, _, done_dict, info = self.engine.step(actions)
@@ -187,7 +193,9 @@ class RaceManager:
                 terminated = done_dict.get(bid, False)
                 raw_reward = 0.1 if not terminated else -1.0
                 reward = entry.reward_fn.compute(obs, raw_reward, terminated, False)
-                # Pipe passing bonus!
+                # Configurable bonuses on top of reward function
+                if not terminated:
+                    reward += entry.alive_reward
                 pipes_passed = entry.bird.score - prev_scores.get(bid, 0)
                 if pipes_passed > 0:
                     reward += entry.pipe_bonus * pipes_passed
