@@ -25,6 +25,19 @@ BUTTON_COLOR = (60, 60, 80)
 BUTTON_HOVER = (80, 80, 110)
 BUTTON_TEXT = (220, 220, 220)
 
+# Tooltip descriptions
+ALGO_TOOLTIPS = {
+    "QL": "Q-Learning : méthode tabulaire\nstocke les Q-valeurs pour\nchaque état discrétisé",
+    "DQN": "Deep Q-Network : réseau de neurones\napproxime les Q-valeurs avec\nexperience replay + target network",
+    "DDQN": "Double DQN : variante du DQN\nréduit la surestimation des\nQ-valeurs (sélection ≠ évaluation)",
+}
+
+REWARD_TOOLTIPS = {
+    "Basic": "Reward Basic : +0.1 en vie\n-1.0 à la mort",
+    "Dist": "Reward Distance : bonus\nproportionnel à la proximité\ndu prochain tuyau",
+    "Center": "Reward Centered : bonus\npour rester centré dans\nl'ouverture du tuyau",
+}
+
 
 class GameRenderer:
     """Renders the multi-bird game + side panel."""
@@ -38,12 +51,16 @@ class GameRenderer:
         self.font = pygame.font.SysFont("monospace", 14, bold=True)
         self.font_large = pygame.font.SysFont("monospace", 18, bold=True)
         self.font_title = pygame.font.SysFont("monospace", 22, bold=True)
+        self.font_small = pygame.font.SysFont("monospace", 11)
+        self._algo_rects = []
 
     def draw(self, engine: FlappyBirdEngine, speed: int, paused: bool,
              bird_configs: dict, buttons: list[dict]):
         """Draw the full frame: game area + panel."""
+        self._algo_rects = []
         self._draw_game(engine)
         self._draw_panel(engine, speed, paused, bird_configs, buttons)
+        self._draw_tooltips()
         pygame.display.flip()
 
     def _draw_game(self, engine: FlappyBirdEngine):
@@ -92,6 +109,25 @@ class GameRenderer:
             pygame.draw.circle(game_surface, (255, 255, 255), (eye_x, eye_y), 5)
             pygame.draw.circle(game_surface, (0, 0, 0), (eye_x, eye_y), 2)
 
+        # Draw connecting lines from alive birds to next pipe gap
+        if engine.pipes:
+            next_pipe = None
+            for pipe in engine.pipes:
+                if pipe["x"] + PIPE_WIDTH > PLAYER_WIDTH:
+                    next_pipe = pipe
+                    break
+            if next_pipe:
+                gap_center = int(next_pipe["gap_y"] + PIPE_GAP / 2)
+                px = int(next_pipe["x"])
+                # Yellow target marker at gap center
+                pygame.draw.circle(game_surface, (255, 255, 0), (px, gap_center), 5, 2)
+                for bird in engine.birds:
+                    if not bird.alive:
+                        continue
+                    bx = int(bird.x + PLAYER_WIDTH)
+                    by = int(bird.y + PLAYER_HEIGHT // 2)
+                    pygame.draw.line(game_surface, bird.color, (bx, by), (px, gap_center), 1)
+
     def _draw_panel(self, engine: FlappyBirdEngine, speed: int, paused: bool,
                     bird_configs: dict, buttons: list[dict]):
         """Draw the side panel with stats and controls."""
@@ -131,13 +167,33 @@ class GameRenderer:
 
             label = self.font.render(f" {algo} + {reward}", True, TEXT_COLOR)
             panel.blit(label, (26, y - 2))
+            # Store rect for tooltip (convert to window coordinates)
+            label_rect = pygame.Rect(SCREEN_WIDTH + 26, y - 2, label.get_width(), label.get_height())
+            tooltip = ALGO_TOOLTIPS.get(algo, "") + "\n\n" + REWARD_TOOLTIPS.get(reward, "")
+            self._algo_rects.append((label_rect, tooltip))
             y += 18
 
             score_txt = self.font.render(
                 f"   Score: {bird.score}  Best: {best}  [{status}]", True, status_color
             )
             panel.blit(score_txt, (10, y - 2))
-            y += 22
+            y += 18
+
+            # Next pipe coordinates
+            next_pipe = None
+            for pipe in engine.pipes:
+                if pipe["x"] + PIPE_WIDTH > bird.x:
+                    next_pipe = pipe
+                    break
+            if next_pipe:
+                dist = int(next_pipe["x"] - bird.x)
+                gap_top = next_pipe["gap_y"]
+                gap_bot = next_pipe["gap_y"] + PIPE_GAP
+                pipe_txt = self.font_small.render(
+                    f"   Pipe: d={dist} gap={gap_top}-{gap_bot}", True, (130, 130, 160)
+                )
+                panel.blit(pipe_txt, (10, y - 2))
+            y += 14
 
         # Separator
         pygame.draw.line(panel, (80, 80, 100), (10, y), (PANEL_WIDTH - 10, y), 1)
@@ -160,6 +216,35 @@ class GameRenderer:
             ty = btn_rect.y + (btn_rect.height - txt.get_height()) // 2
             panel.blit(txt, (tx, ty))
             y += 38
+
+    def _draw_tooltips(self):
+        """Draw tooltip if mouse hovers over an algorithm label."""
+        mouse_pos = pygame.mouse.get_pos()
+        for rect, text in self._algo_rects:
+            if rect.collidepoint(mouse_pos):
+                lines = text.split("\n")
+                rendered = [self.font_small.render(line, True, TEXT_COLOR) for line in lines if line]
+                if not rendered:
+                    break
+                max_w = max(r.get_width() for r in rendered)
+                total_h = sum(r.get_height() for r in rendered)
+                # Position tooltip to the left of cursor
+                tx = mouse_pos[0] - max_w - 15
+                ty = mouse_pos[1] - 10
+                if tx < 0:
+                    tx = mouse_pos[0] + 15
+                if ty + total_h + 8 > WINDOW_HEIGHT:
+                    ty = WINDOW_HEIGHT - total_h - 8
+                # Background
+                bg = pygame.Rect(tx - 6, ty - 4, max_w + 12, total_h + 8)
+                pygame.draw.rect(self.screen, (20, 20, 35), bg, border_radius=4)
+                pygame.draw.rect(self.screen, (100, 100, 140), bg, 1, border_radius=4)
+                # Text
+                cy = ty
+                for r in rendered:
+                    self.screen.blit(r, (tx, cy))
+                    cy += r.get_height()
+                break
 
     def quit(self):
         pygame.quit()

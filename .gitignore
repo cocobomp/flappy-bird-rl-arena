@@ -9,3 +9,9 @@ models/
 *.pkl
 .DS_Store
 firebase-debug.log
+.venv/
+venv/
+.env/
+.pytest_cache/
+.idea/
+*.log

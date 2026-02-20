@@ -116,6 +116,14 @@ class FlappyBirdEngine:
         Returns:
             (observations, rewards, dones, info)
         """
+        if not self.birds:
+            return {}, {}, {}, {
+                "round_over": True,
+                "round_num": self.round_num,
+                "frame": self.frame,
+                "best_bird_id": -1,
+            }
+
         self.frame += 1
 
         # Apply actions

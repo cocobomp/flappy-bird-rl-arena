@@ -71,10 +71,10 @@ class BasicReward(RewardFunction):
 class DistanceReward(RewardFunction):
     """Reward proportional to proximity to the next pipe.
 
-    Uses obs[3] (next pipe horizontal position): smaller values mean the
-    bird has progressed further toward the pipe, yielding higher reward.
-    The reward is computed as (1.0 - next_pipe_x) so that closer pipes
-    give a higher reward. Returns -1000.0 on death.
+    Supports both observation formats:
+      - Custom engine (4 features): obs[2] = dist_next (normalized)
+      - Gymnasium (12 features): obs[3] = next pipe horizontal position
+    Returns -1000.0 on death.
     """
 
     def compute(
@@ -86,6 +86,10 @@ class DistanceReward(RewardFunction):
     ) -> float:
         if terminated:
             return -1000.0
+        if len(obs) <= 4:
+            # Custom engine: [player_y, vel, dist_next, gap_center]
+            return 1.0 - float(obs[2])
+        # Gymnasium 12-feature obs
         next_pipe_x = float(obs[3])
         return 1.0 - next_pipe_x
 
@@ -93,9 +97,9 @@ class DistanceReward(RewardFunction):
 class CenteredReward(RewardFunction):
     """Bonus for staying centered in the pipe gap.
 
-    Gap center = (obs[4] + obs[5]) / 2.  Player y = obs[9].
-    The reward is 1.0 (base) + bonus up to 2.0, where the bonus is
-    maximised when the player is perfectly centered in the gap.
+    Supports both observation formats:
+      - Custom engine (4 features): obs[0] = player_y, obs[3] = gap_center
+      - Gymnasium (12 features): obs[4]/obs[5] = pipe gap, obs[9] = player_y
     Returns -1000.0 on death.
     """
 
@@ -109,8 +113,15 @@ class CenteredReward(RewardFunction):
         if terminated:
             return -1000.0
 
-        gap_center = (float(obs[4]) + float(obs[5])) / 2.0
-        player_y = float(obs[9])
+        if len(obs) <= 4:
+            # Custom engine: [player_y, vel, dist_next, gap_center]
+            player_y = float(obs[0])
+            gap_center = float(obs[3])
+        else:
+            # Gymnasium 12-feature obs
+            gap_center = (float(obs[4]) + float(obs[5])) / 2.0
+            player_y = float(obs[9])
+
         distance = abs(player_y - gap_center)
 
         # Bonus decays with distance; max bonus = 2.0 when distance = 0.
