@@ -25,7 +25,7 @@ class TestDoubleDQNCreation:
         agent = DoubleDQNAgent(state_dim=4, action_dim=2)
         assert agent.state_dim == 4
         assert agent.action_dim == 2
-        assert agent.gamma == 0.99
+        assert agent.gamma == 0.95
         assert agent.epsilon == 1.0
 
     def test_custom_parameters(self):

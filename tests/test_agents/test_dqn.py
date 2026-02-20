@@ -101,10 +101,10 @@ class TestDQNCreation:
         agent = DQNAgent(state_dim=4, action_dim=2)
         assert agent.state_dim == 4
         assert agent.action_dim == 2
-        assert agent.gamma == 0.99
+        assert agent.gamma == 0.95
         assert agent.epsilon == 1.0
         assert agent.epsilon_end == 0.01
-        assert agent.epsilon_decay == 0.995
+        assert agent.epsilon_decay == 0.99995
         assert agent.batch_size == 64
         assert agent.tau == 0.005
         assert agent.train_every == 4

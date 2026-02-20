@@ -219,17 +219,16 @@ class FlappyBirdEngine:
                 pipe["scored"] = True
 
     def get_observation(self, bird: Bird) -> np.ndarray:
-        """Get observation for a bird: 8 features covering the two nearest pipes.
+        """Get observation for a bird: 5 relative features covering the two nearest pipes.
 
         Features (all normalized):
-            player_y   – bird.y / SCREEN_HEIGHT
+            delta_y1   – (bird.y - gap_center1) / SCREEN_HEIGHT  (positive = below gap)
             velocity   – bird.vel_y / PLAYER_MAX_VEL_Y
-            dist_pipe1 – distance to next pipe / SCREEN_WIDTH
-            top1       – next pipe upper gap edge / SCREEN_HEIGHT
-            bottom1    – next pipe lower gap edge / SCREEN_HEIGHT
-            dist_pipe2 – distance to second pipe / SCREEN_WIDTH
-            top2       – second pipe upper gap edge / SCREEN_HEIGHT
-            bottom2    – second pipe lower gap edge / SCREEN_HEIGHT
+            dist_pipe1 – (pipe1_x - bird.x) / SCREEN_WIDTH
+            delta_y2   – (bird.y - gap_center2) / SCREEN_HEIGHT  (positive = below gap)
+            dist_pipe2 – (pipe2_x - bird.x) / SCREEN_WIDTH
+
+        Where gap_center = gap_y + PIPE_GAP / 2.
         """
         default_pipe = {"x": SCREEN_WIDTH, "gap_y": GROUND_Y // 2, "lower_y": GROUND_Y // 2 + PIPE_GAP}
 
@@ -252,16 +251,16 @@ class FlappyBirdEngine:
         player_y = bird.y / SCREEN_HEIGHT
         velocity = bird.vel_y / PLAYER_MAX_VEL_Y
 
+        gap_center1 = (next_pipe["gap_y"] + PIPE_GAP / 2) / SCREEN_HEIGHT
         dist_pipe1 = (next_pipe["x"] - bird.x) / SCREEN_WIDTH
-        top1 = next_pipe["gap_y"] / SCREEN_HEIGHT
-        bottom1 = (next_pipe["gap_y"] + PIPE_GAP) / SCREEN_HEIGHT
+        delta_y1 = player_y - gap_center1
 
+        gap_center2 = (second_pipe["gap_y"] + PIPE_GAP / 2) / SCREEN_HEIGHT
         dist_pipe2 = (second_pipe["x"] - bird.x) / SCREEN_WIDTH
-        top2 = second_pipe["gap_y"] / SCREEN_HEIGHT
-        bottom2 = (second_pipe["gap_y"] + PIPE_GAP) / SCREEN_HEIGHT
+        delta_y2 = player_y - gap_center2
 
-        return np.array([player_y, velocity, dist_pipe1, top1, bottom1,
-                         dist_pipe2, top2, bottom2], dtype=np.float32)
+        return np.array([delta_y1, velocity, dist_pipe1,
+                         delta_y2, dist_pipe2], dtype=np.float32)
 
     def get_alive_count(self) -> int:
         return sum(1 for b in self.birds if b.alive)

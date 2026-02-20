@@ -5,7 +5,7 @@ from src.game.race import RaceManager, BirdEntry
 class TestBirdEntry:
     def test_creation(self):
         entry = BirdEntry(algo="dqn", reward="basic", strategy_name="guided",
-                          color=(255, 0, 0), state_dim=8)
+                          color=(255, 0, 0), state_dim=5)
         assert entry.agent is not None
         assert entry.reward_fn is not None
         assert entry.strategy is not None

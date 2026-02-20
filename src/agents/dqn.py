@@ -28,7 +28,7 @@ class QNetwork(nn.Module):
     ):
         super().__init__()
         if hidden_dims is None:
-            hidden_dims = [128, 128]
+            hidden_dims = [64, 32]
 
         layers = []
         prev_dim = state_dim
@@ -94,21 +94,21 @@ class DQNAgent(BaseAgent):
         state_dim: int,
         action_dim: int,
         hidden_dims: List[int] = None,
-        lr: float = 5e-4,
-        gamma: float = 0.99,
+        lr: float = 3e-4,
+        gamma: float = 0.95,
         epsilon_start: float = 1.0,
         epsilon_end: float = 0.01,
-        epsilon_decay: float = 0.995,
-        buffer_size: int = 50000,
+        epsilon_decay: float = 0.99995,
+        buffer_size: int = 10000,
         batch_size: int = 64,
         tau: float = 0.005,
         train_every: int = 4,
-        train_intensity: int = 4,
+        train_intensity: int = 2,
     ):
         super().__init__(state_dim, action_dim)
 
         if hidden_dims is None:
-            hidden_dims = [128, 128]
+            hidden_dims = [64, 32]
 
         self.gamma = gamma
         self.epsilon = epsilon_start
@@ -221,7 +221,7 @@ class DQNAgent(BaseAgent):
             next_q = self.target_net(next_states_t).max(1)[0]
             target = rewards_t + self.gamma * next_q * (1.0 - dones_t)
 
-        loss = nn.functional.mse_loss(q_taken, target)
+        loss = nn.functional.smooth_l1_loss(q_taken, target)
         q_mean = q_values.detach().mean().item()
 
         return loss, q_mean
@@ -260,7 +260,7 @@ class DQNAgent(BaseAgent):
                 self.optimizer.zero_grad()
                 loss.backward()
                 # Gradient clipping
-                nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm=10.0)
+                nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm=1.0)
                 self.optimizer.step()
 
             # Soft update target network (once per step, outside inner loop)

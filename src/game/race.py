@@ -23,7 +23,7 @@ REWARD_MAP = {
     "smart": SmartReward,
 }
 
-STATE_DIM = 8
+STATE_DIM = 5
 ACTION_DIM = 2
 
 
@@ -36,8 +36,8 @@ class BirdEntry:
     color: tuple[int, int, int]
     state_dim: int = STATE_DIM
     epsilon_start: float = 1.0
-    lr: float = 5e-4
-    epsilon_decay: float = 0.9995
+    lr: float = 3e-4
+    epsilon_decay: float = 0.99995
     death_penalty: float = 20.0
     pipe_bonus: float = 10.0
     alive_reward: float = 0.05
@@ -68,11 +68,11 @@ class BirdEntry:
         else:
             self.agent = agent_cls(
                 state_dim=self.state_dim, action_dim=ACTION_DIM,
-                hidden_dims=[128, 128], lr=self.lr, gamma=0.99,
+                hidden_dims=[64, 32], lr=self.lr, gamma=0.95,
                 epsilon_start=self.epsilon_start, epsilon_end=0.01,
                 epsilon_decay=self.epsilon_decay,
-                buffer_size=50000, batch_size=64, tau=0.005, train_every=1,
-                train_intensity=4,
+                buffer_size=10000, batch_size=64, tau=0.005, train_every=1,
+                train_intensity=2,
             )
         if self.reward == "smart":
             self.reward_fn = SmartReward(death_penalty=self.death_penalty)
@@ -119,8 +119,8 @@ class RaceManager:
         self.best_ever_score: int = 0
 
     def add_bird(self, algo: str, reward: str, strategy: str = "guided",
-                 epsilon_start: float = 0.3, lr: float = 5e-4,
-                 epsilon_decay: float = 0.995, death_penalty: float = 20.0,
+                 epsilon_start: float = 0.3, lr: float = 3e-4,
+                 epsilon_decay: float = 0.99995, death_penalty: float = 20.0,
                  pipe_bonus: float = 10.0, alive_reward: float = 0.05,
                  flap_threshold: float = 0.04, strategy_noise: float = 0.10,
                  ) -> BirdEntry:

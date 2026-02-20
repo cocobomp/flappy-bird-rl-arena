@@ -67,10 +67,10 @@ EDUCATION_SECTIONS = [
         "4. Epsilon decroit: explore -> apprend",
         "",
     ]),
-    ("Ce que l'oiseau voit (8 inputs)", SECTION_COLOR, [
-        "Position Y + Vitesse verticale",
-        "Porte 1: distance, haut, bas",
-        "Porte 2: distance, haut, bas",
+    ("Ce que l'oiseau voit (5 inputs)", SECTION_COLOR, [
+        "Ecart au centre porte 1 + Vitesse",
+        "Distance porte 1",
+        "Ecart au centre porte 2 + Distance",
         "Sortie: ne rien faire OU sauter",
         "",
     ]),
@@ -83,7 +83,7 @@ EDUCATION_SECTIONS = [
 
 # Neural network visualization config
 NN_LAYER_LABELS = [
-    ["y", "vel", "d1", "t1", "b1", "d2", "t2", "b2"],  # input (8D)
+    ["dy1", "vel", "d1", "dy2", "d2"],  # input (5D relative)
     None,                                # hidden1 (sampled)
     None,                                # hidden2 (sampled)
     ["noop", "FLAP"],                    # output
@@ -492,10 +492,9 @@ class GameRenderer:
             surface.blit(t, (x + 10, y))
             return
 
-        labels = ["Pos Y", "Vitesse", "Dist P1", "Haut P1",
-                  "Bas P1", "Dist P2", "Haut P2", "Bas P2"]
+        labels = ["Delta Y1", "Vitesse", "Dist P1", "Delta Y2", "Dist P2"]
         bar_w = w - 100
-        for i, val in enumerate(obs[:8]):
+        for i, val in enumerate(obs[:5]):
             lbl = labels[i] if i < len(labels) else f"obs[{i}]"
             val = float(val)
             # Label
