@@ -175,22 +175,22 @@ class AddBirdDialog:
 
         rx, ry = mx - dx, my - dy
 
-        # Algo buttons (y=30..54)
+        # Algo buttons (drawn at x=80, y=y_off+5, h=22)
         for i in range(len(ALGO_OPTIONS)):
-            bx = 15 + i * 132
-            if bx <= rx <= bx + 124 and 30 <= ry <= 54:
+            bx = 80 + i * 132
+            if bx <= rx <= bx + 124 and 30 <= ry <= 52:
                 self.selected_algo = i
 
-        # Reward buttons (y=60..84)
+        # Reward buttons
         for i in range(len(REWARD_OPTIONS)):
-            bx = 15 + i * 100
-            if bx <= rx <= bx + 92 and 60 <= ry <= 84:
+            bx = 80 + i * 100
+            if bx <= rx <= bx + 92 and 60 <= ry <= 82:
                 self.selected_reward = i
 
-        # Strategy buttons (y=90..114)
+        # Strategy buttons
         for i in range(len(STRATEGY_OPTIONS)):
-            bx = 15 + i * 100
-            if bx <= rx <= bx + 92 and 90 <= ry <= 114:
+            bx = 80 + i * 100
+            if bx <= rx <= bx + 92 and 90 <= ry <= 112:
                 self.selected_strategy = i
 
         # Confirm (y=396..426)
