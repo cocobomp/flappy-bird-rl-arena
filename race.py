@@ -10,15 +10,16 @@ def main():
     renderer = GameRenderer()
     dialog = AddBirdDialog(window_width=WINDOW_WIDTH, window_height=WINDOW_HEIGHT)
 
-    # Start with 3 birds showcasing different strategies (same algo/reward)
-    manager.add_bird(algo="dqn", reward="smart", strategy="guided")
-    manager.add_bird(algo="dqn", reward="smart", strategy="heuristic")
-    manager.add_bird(algo="dqn", reward="smart", strategy="random")
+    # Start with 5 identical birds using the best strategy + evolution ON
+    for _ in range(5):
+        manager.add_bird(algo="dqn", reward="smart", strategy="guided")
+    manager.evolution_enabled = True
     manager.reset_round()
 
     buttons = [
         {"label": "+ Add Bird", "action": "add_bird", "rect": None},
         {"label": "Boost All (e=0.05)", "action": "boost", "rect": None},
+        {"label": "Evolution: OFF", "action": "evolution", "rect": None},
         {"label": "Pause", "action": "pause", "rect": None},
     ]
 
@@ -77,6 +78,8 @@ def main():
                                     dialog.show()
                                 elif btn["action"] == "boost":
                                     manager.boost_all()
+                                elif btn["action"] == "evolution":
+                                    manager.evolution_enabled = not manager.evolution_enabled
                                 elif btn["action"] == "pause":
                                     manager.paused = not manager.paused
 
@@ -84,7 +87,9 @@ def main():
         manager.speed = renderer.speed
 
         # Update button labels
-        buttons[2]["label"] = "Resume" if manager.paused else "Pause"
+        evo_label = "Evolution: ON" if manager.evolution_enabled else "Evolution: OFF"
+        buttons[2]["label"] = evo_label
+        buttons[3]["label"] = "Resume" if manager.paused else "Pause"
 
         # Game logic
         if not manager.paused:

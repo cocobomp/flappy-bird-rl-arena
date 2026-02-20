@@ -177,3 +177,15 @@ class QLearningAgent(BaseAgent):
             "epsilon": self.epsilon,
             "q_table_size": len(self.q_table),
         }
+
+    def get_weights(self) -> dict:
+        return {k: v.copy() for k, v in self.q_table.items()}
+
+    def set_weights(self, weights: dict) -> None:
+        self.q_table = defaultdict(lambda: np.zeros(self.action_dim))
+        for k, v in weights.items():
+            self.q_table[k] = v.copy()
+
+    def mutate(self, noise_scale: float = 0.1) -> None:
+        for key in list(self.q_table.keys()):
+            self.q_table[key] += np.random.normal(0, noise_scale, self.action_dim)

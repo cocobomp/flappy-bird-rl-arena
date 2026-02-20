@@ -253,11 +253,11 @@ class DQNAgent(BaseAgent):
             metrics["loss"] = loss.item()
             metrics["q_mean"] = q_mean
 
-            # Decay epsilon only when we actually train
-            self.epsilon = max(
-                self.epsilon_end,
-                self.epsilon * self.epsilon_decay,
-            )
+        # Decay epsilon every step
+        self.epsilon = max(
+            self.epsilon_end,
+            self.epsilon * self.epsilon_decay,
+        )
 
         return metrics
 
@@ -329,3 +329,18 @@ class DQNAgent(BaseAgent):
             "epsilon": self.epsilon,
             "step_count": self._step_count,
         }
+
+    def get_weights(self) -> dict:
+        return {k: v.clone() for k, v in self.q_net.state_dict().items()}
+
+    def set_weights(self, weights: dict) -> None:
+        self.q_net.load_state_dict(weights)
+        self.target_net.load_state_dict(weights)
+        self.target_net.eval()
+
+    def mutate(self, noise_scale: float = 0.1) -> None:
+        with torch.no_grad():
+            for param in self.q_net.parameters():
+                param.add_(torch.randn_like(param) * noise_scale)
+        self.target_net.load_state_dict(self.q_net.state_dict())
+        self.target_net.eval()

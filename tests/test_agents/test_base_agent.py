@@ -78,6 +78,15 @@ class TestCompleteSubclass:
             def get_info(self):
                 return {}
 
+            def get_weights(self):
+                return {}
+
+            def set_weights(self, weights):
+                pass
+
+            def mutate(self, noise_scale=0.1):
+                pass
+
         return ConcreteAgent(state_dim=state_dim, action_dim=action_dim)
 
     def test_complete_subclass_instantiates(self):

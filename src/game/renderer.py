@@ -92,17 +92,19 @@ EDUCATION_SECTIONS = [
         "le reseau a appris!",
         "",
     ]),
-    ("Controles", SECTION_COLOR, [
-        "[Strat] Change strategie",
-        "[e/2]   Epsilon / 2",
-        "[X] Supprime  [Boost] e=0.05",
+    ("Evolution", SECTION_COLOR, [
+        "Quand activee, a chaque round:",
+        "les pires oiseaux copient les",
+        "poids des meilleurs + mutation.",
+        "G:N = generation (nb copies).",
+        "Le rond = couleur du parent.",
         "",
     ]),
     ("Conseils", SECTION_COLOR, [
         "* Guided + Smart = apprend vite",
-        "* Vitesse x32-x64 pour aller",
-        "  vite, puis [e/2] quand les",
-        "  Q-values commencent a varier",
+        "* Vitesse x32-x64 puis [e/2]",
+        "* Evolution ON + 4-6 oiseaux",
+        "  = apprentissage collectif!",
     ]),
 ]
 
@@ -275,12 +277,20 @@ class GameRenderer:
             self._hover_rects.append((label_rect, tooltip))
             y += 15
 
-            # Line 2: score + best + pipes + status
+            # Line 2: score + best + pipes + generation + status
+            gen = config.get("generation", 0)
+            gen_str = f" G:{gen}" if gen > 0 else ""
             score_txt = self.font_small.render(
-                f" S:{bird.score} B:{best} P:{total_pipes} {'alive' if bird.alive else 'dead'}",
+                f" S:{bird.score} B:{best} P:{total_pipes}{gen_str} {'alive' if bird.alive else 'dead'}",
                 True, status_color,
             )
             panel.blit(score_txt, (10, y))
+            # Parent color indicator
+            parent_color = config.get("parent_color")
+            if parent_color and gen > 0:
+                px = PANEL_WIDTH - 20
+                pygame.draw.circle(panel, parent_color, (px, y + 6), 4)
+                pygame.draw.circle(panel, (200, 200, 200), (px, y + 6), 4, 1)
             y += 13
 
             # Line 3: epsilon + Q-values + mode badge

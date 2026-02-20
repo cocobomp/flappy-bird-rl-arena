@@ -72,3 +72,18 @@ class BaseAgent(ABC):
             A dict of current agent state (e.g. epsilon, lr, table size).
         """
         pass
+
+    @abstractmethod
+    def get_weights(self) -> dict:
+        """Return a copy of the agent's learned parameters."""
+        pass
+
+    @abstractmethod
+    def set_weights(self, weights: dict) -> None:
+        """Replace the agent's learned parameters with a copy."""
+        pass
+
+    @abstractmethod
+    def mutate(self, noise_scale: float = 0.1) -> None:
+        """Add random noise to the agent's parameters (for evolution)."""
+        pass

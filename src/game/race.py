@@ -35,12 +35,12 @@ class BirdEntry:
     strategy_name: str
     color: tuple[int, int, int]
     state_dim: int = STATE_DIM
-    epsilon_start: float = 0.8
+    epsilon_start: float = 0.3
     lr: float = 5e-4
-    epsilon_decay: float = 0.998
-    death_penalty: float = 5.0
+    epsilon_decay: float = 0.995
+    death_penalty: float = 20.0
     pipe_bonus: float = 10.0
-    alive_reward: float = 0.2
+    alive_reward: float = 0.05
     flap_threshold: float = 0.04
     strategy_noise: float = 0.10
     agent: BaseAgent = field(init=False)
@@ -49,6 +49,8 @@ class BirdEntry:
     bird: Bird | None = field(default=None, init=False)
     best_score: int = 0
     total_pipes: int = 0
+    generation: int = 0
+    parent_color: tuple[int, int, int] | None = field(default=None, init=False)
     prev_obs: np.ndarray | None = field(default=None, init=False)
     last_exploring: bool = field(default=True, init=False)
     last_q_values: np.ndarray | None = field(default=None, init=False)
@@ -65,10 +67,10 @@ class BirdEntry:
         else:
             self.agent = agent_cls(
                 state_dim=self.state_dim, action_dim=ACTION_DIM,
-                hidden_dims=[64, 64], lr=self.lr, gamma=0.99,
+                hidden_dims=[128, 128], lr=self.lr, gamma=0.99,
                 epsilon_start=self.epsilon_start, epsilon_end=0.01,
                 epsilon_decay=self.epsilon_decay,
-                buffer_size=20000, batch_size=32, tau=0.005, train_every=4,
+                buffer_size=50000, batch_size=64, tau=0.005, train_every=1,
             )
         if self.reward == "smart":
             self.reward_fn = SmartReward(death_penalty=self.death_penalty)
@@ -107,12 +109,14 @@ class RaceManager:
         self.render_enabled = render
         self.speed = 1
         self.paused = False
+        self.evolution_enabled = False
+        self.mutation_scale = 0.02
         self._color_index = 0
 
     def add_bird(self, algo: str, reward: str, strategy: str = "guided",
-                 epsilon_start: float = 0.8, lr: float = 5e-4,
-                 epsilon_decay: float = 0.998, death_penalty: float = 5.0,
-                 pipe_bonus: float = 10.0, alive_reward: float = 0.2,
+                 epsilon_start: float = 0.3, lr: float = 5e-4,
+                 epsilon_decay: float = 0.995, death_penalty: float = 20.0,
+                 pipe_bonus: float = 10.0, alive_reward: float = 0.05,
                  flap_threshold: float = 0.04, strategy_noise: float = 0.10,
                  ) -> BirdEntry:
         color = BIRD_COLORS[self._color_index % len(BIRD_COLORS)]
@@ -153,7 +157,28 @@ class RaceManager:
         for entry in self.entries:
             entry.agent.epsilon = 0.05
 
+    def evolve(self):
+        """All birds copy weights from the best bird (+ mutation)."""
+        if len(self.entries) < 2:
+            return
+        # Best = highest score, tiebreak by steps alive
+        best = max(self.entries,
+                   key=lambda e: (e.bird.score, e.bird.steps_alive))
+        weights = best.agent.get_weights()
+        for entry in self.entries:
+            if entry is best:
+                continue
+            if type(entry.agent) is not type(best.agent):
+                continue
+            entry.agent.set_weights(weights)
+            entry.agent.mutate(noise_scale=self.mutation_scale)
+            entry.agent.epsilon = best.agent.epsilon
+            entry.generation += 1
+            entry.parent_color = best.color
+
     def reset_round(self):
+        if self.evolution_enabled:
+            self.evolve()
         self.engine.reset()
         for entry in self.entries:
             entry.prev_obs = self.engine.get_observation(entry.bird)
@@ -222,6 +247,8 @@ class RaceManager:
                 "epsilon": round(entry.agent.epsilon, 3),
                 "exploring": entry.last_exploring,
                 "q_display": entry.q_display,
+                "generation": entry.generation,
+                "parent_color": entry.parent_color,
                 "index": i,
             }
         return configs
