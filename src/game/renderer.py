@@ -10,9 +10,9 @@ from src.game.engine import (
 from src.game.ui import Slider
 
 PANEL_WIDTH = 280
-EDUCATION_WIDTH = 300
+EDUCATION_WIDTH = 380
 WINDOW_WIDTH = SCREEN_WIDTH + PANEL_WIDTH + EDUCATION_WIDTH
-WINDOW_HEIGHT = SCREEN_HEIGHT
+WINDOW_HEIGHT = 700
 
 # Colors
 SKY_COLOR = (78, 192, 202)
@@ -57,29 +57,38 @@ STRATEGY_TOOLTIPS = {
     "Guided": "Gravity loin + Heuristique pres",
 }
 
-# Education panel content (condensed to make room for visualizations)
+# Education panel content
 EDUCATION_SECTIONS = [
     ("CERVEAU DE L'OISEAU", None, []),
-    ("Apprentissage", SECTION_COLOR, [
-        "EXPLORE = strategie d'exploration",
-        "APPREND = reseau de neurones!",
-        "Evolution = copie du meilleur",
+    ("Comment il apprend", SECTION_COLOR, [
+        "1. EXPLORE: strategie guidee (PD controller)",
+        "2. Stocke chaque experience en memoire",
+        "3. S'entraine 4x/frame sur des mini-lots",
+        "4. Epsilon decroit: explore -> apprend",
+        "",
+    ]),
+    ("Ce que l'oiseau voit (8 inputs)", SECTION_COLOR, [
+        "Position Y + Vitesse verticale",
+        "Porte 1: distance, haut, bas",
+        "Porte 2: distance, haut, bas",
+        "Sortie: ne rien faire OU sauter",
         "",
     ]),
     ("Conseils", SECTION_COLOR, [
-        "Vitesse x32-x64 puis [e/2]",
-        "Evolution ON + 5 oiseaux",
+        "Vitesse x32-x64 pour accelerer",
+        "[e/2] = forcer exploitation",
+        "Evolution ON = copie du champion",
     ]),
 ]
 
 # Neural network visualization config
 NN_LAYER_LABELS = [
-    ["y", "vel", "dist", "gap"],       # input
+    ["y", "vel", "d1", "t1", "b1", "d2", "t2", "b2"],  # input (8D)
     None,                                # hidden1 (sampled)
     None,                                # hidden2 (sampled)
     ["noop", "FLAP"],                    # output
 ]
-NN_SAMPLE_NODES = 6  # how many nodes to show per hidden layer
+NN_SAMPLE_NODES = 8  # how many nodes to show per hidden layer
 
 
 class GameRenderer:
@@ -140,24 +149,29 @@ class GameRenderer:
 
     def _draw_game(self, engine: FlappyBirdEngine, bird_configs: dict = None):
         """Draw game area: sky, pipes, birds, trails, ghost, ground."""
+        # Fill area below game with ground color (window taller than game)
+        if WINDOW_HEIGHT > SCREEN_HEIGHT:
+            extra = pygame.Rect(0, SCREEN_HEIGHT, SCREEN_WIDTH, WINDOW_HEIGHT - SCREEN_HEIGHT)
+            pygame.draw.rect(self.screen, GROUND_COLOR, extra)
         game_surface = self.screen.subsurface((0, 0, SCREEN_WIDTH, SCREEN_HEIGHT))
         game_surface.fill(SKY_COLOR)
 
-        # Ghost trail from best ever run
+        # Ghost trail from all-time best run
         ghost_trail = (bird_configs or {}).get("_ghost_trail", [])
+        best_ever = (bird_configs or {}).get("_best_ever", 0)
         if ghost_trail and engine.frame < len(ghost_trail):
             gy = int(ghost_trail[engine.frame])
             ghost_surf = pygame.Surface((PLAYER_WIDTH, PLAYER_HEIGHT), pygame.SRCALPHA)
             pygame.draw.ellipse(ghost_surf, (255, 255, 255, 60), (0, 0, PLAYER_WIDTH, PLAYER_HEIGHT))
-            game_surface.blit(ghost_surf, (int(engine.birds[0].x if engine.birds else 57), gy))
-            # Ghost label
-            gl = self.font_tiny.render("RECORD", True, (255, 255, 255))
-            game_surface.blit(gl, (int((engine.birds[0].x if engine.birds else 57)) - 2, gy - 10))
+            gx = int(engine.birds[0].x if engine.birds else 57)
+            game_surface.blit(ghost_surf, (gx, gy))
+            gl = self.font_tiny.render(f"RECORD: {best_ever}", True, (255, 255, 255))
+            game_surface.blit(gl, (gx - 2, gy - 10))
 
-        # Bird trails (fading dots behind each bird)
+        # Bird trails (fading dots behind each alive bird)
         trail_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
         for bird in engine.birds:
-            if not bird.trail:
+            if not bird.alive or not bird.trail:
                 continue
             n = len(bird.trail)
             for i, ty in enumerate(bird.trail):
@@ -418,10 +432,95 @@ class GameRenderer:
         y += 130
 
         pygame.draw.line(edu, (60, 60, 80), (10, y), (EDUCATION_WIDTH - 10, y))
+        y += 6
+
+        # --- Observation en direct (best bird) ---
+        self._draw_obs_live(edu, 10, y, EDUCATION_WIDTH - 20, bird_configs)
+        y += 110
+
+        pygame.draw.line(edu, (60, 60, 80), (10, y), (EDUCATION_WIDTH - 10, y))
+        y += 6
+
+        # --- RL stats ---
+        best_ever = bird_configs.get("_best_ever", 0)
+        t = self.font.render("Statistiques RL", True, SECTION_COLOR)
+        edu.blit(t, (10, y))
+        y += 16
+        t = self.font_small.render(f"Record absolu: {best_ever}", True, HIGHLIGHT_COLOR)
+        edu.blit(t, (14, y))
+        y += 14
+        # Show epsilon + training info for each bird
+        for k, v in bird_configs.items():
+            if isinstance(k, str) and k.startswith("_"):
+                continue
+            if not isinstance(v, dict):
+                continue
+            eps = v.get("epsilon", 0)
+            gen = v.get("generation", 0)
+            algo = v.get("algo", "?")
+            pct_exploit = max(0, 100 - int(eps * 100))
+            bar_w = int(pct_exploit * 1.2)
+            t = self.font_tiny.render(f"{algo} e={eps:.3f} [{pct_exploit}% apprend]", True, DIM_COLOR)
+            edu.blit(t, (14, y))
+            # Mini progress bar
+            bar_x = EDUCATION_WIDTH - 140
+            bar_rect = pygame.Rect(bar_x, y + 2, 120, 8)
+            pygame.draw.rect(edu, (40, 40, 55), bar_rect, border_radius=2)
+            fill_rect = pygame.Rect(bar_x, y + 2, bar_w, 8)
+            color = EXPLOIT_COLOR if pct_exploit > 50 else EXPLORE_COLOR
+            pygame.draw.rect(edu, color, fill_rect, border_radius=2)
+            y += 13
+
+    def _draw_obs_live(self, surface, x, y, w, bird_configs):
+        """Draw live observation values as horizontal bars."""
+        t = self.font.render("Observation en direct", True, SECTION_COLOR)
+        surface.blit(t, (x + 5, y + 2))
+        y += 18
+
+        # Find best alive bird's activations (input layer = obs)
+        obs = None
+        for k, v in bird_configs.items():
+            if isinstance(k, str) and k.startswith("_"):
+                continue
+            if isinstance(v, dict) and v.get("activations"):
+                act = v["activations"]
+                if act and len(act) > 0:
+                    obs = np.asarray(act[0])
+                    break
+        if obs is None:
+            t = self.font_tiny.render("(en attente...)", True, DIM_COLOR)
+            surface.blit(t, (x + 10, y))
+            return
+
+        labels = ["Pos Y", "Vitesse", "Dist P1", "Haut P1",
+                  "Bas P1", "Dist P2", "Haut P2", "Bas P2"]
+        bar_w = w - 100
+        for i, val in enumerate(obs[:8]):
+            lbl = labels[i] if i < len(labels) else f"obs[{i}]"
+            val = float(val)
+            # Label
+            lt = self.font_tiny.render(f"{lbl}", True, DIM_COLOR)
+            surface.blit(lt, (x + 5, y))
+            # Bar background
+            bx = x + 65
+            bar_rect = pygame.Rect(bx, y + 1, bar_w, 9)
+            pygame.draw.rect(surface, (30, 33, 45), bar_rect, border_radius=2)
+            # Fill (clamp to [0, 1] for display)
+            fill_w = int(max(0, min(1, val)) * bar_w)
+            if fill_w > 0:
+                # Color gradient: blue (low) -> green (high)
+                g = int(val * 200)
+                b = int((1 - val) * 200)
+                fill = pygame.Rect(bx, y + 1, fill_w, 9)
+                pygame.draw.rect(surface, (40, min(255, 80 + g), min(255, 80 + b)), fill, border_radius=2)
+            # Value text
+            vt = self.font_tiny.render(f"{val:.2f}", True, TEXT_COLOR)
+            surface.blit(vt, (bx + bar_w + 4, y))
+            y += 11
 
     def _draw_neural_net(self, surface, x, y, w, h, activations):
         """Draw a live neural network diagram with colored activations."""
-        # activations: [input(4), hidden1(128), hidden2(128), output(2)]
+        # activations: [input(8), hidden1(128), hidden2(128), output(2)]
         n_layers = len(activations)
         if n_layers < 2:
             return

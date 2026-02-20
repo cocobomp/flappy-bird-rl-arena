@@ -23,7 +23,7 @@ REWARD_MAP = {
     "smart": SmartReward,
 }
 
-STATE_DIM = 4
+STATE_DIM = 8
 ACTION_DIM = 2
 
 
@@ -35,9 +35,9 @@ class BirdEntry:
     strategy_name: str
     color: tuple[int, int, int]
     state_dim: int = STATE_DIM
-    epsilon_start: float = 0.3
+    epsilon_start: float = 1.0
     lr: float = 5e-4
-    epsilon_decay: float = 0.995
+    epsilon_decay: float = 0.9995
     death_penalty: float = 20.0
     pipe_bonus: float = 10.0
     alive_reward: float = 0.05
@@ -72,6 +72,7 @@ class BirdEntry:
                 epsilon_start=self.epsilon_start, epsilon_end=0.01,
                 epsilon_decay=self.epsilon_decay,
                 buffer_size=50000, batch_size=64, tau=0.005, train_every=1,
+                train_intensity=4,
             )
         if self.reward == "smart":
             self.reward_fn = SmartReward(death_penalty=self.death_penalty)
@@ -115,6 +116,7 @@ class RaceManager:
         self._color_index = 0
         self.round_scores: list[int] = []
         self.ghost_trail: list[float] = []
+        self.best_ever_score: int = 0
 
     def add_bird(self, algo: str, reward: str, strategy: str = "guided",
                  epsilon_start: float = 0.3, lr: float = 5e-4,
@@ -187,7 +189,8 @@ class RaceManager:
             self.round_scores.append(best.bird.score)
             if len(self.round_scores) > 100:
                 self.round_scores.pop(0)
-            if best.bird.score > 0 and best.bird.score >= max((e.best_score for e in self.entries), default=0):
+            if best.bird.score > self.best_ever_score:
+                self.best_ever_score = best.bird.score
                 self.ghost_trail = list(best.bird.trail)
         self.engine.reset()
         for entry in self.entries:
@@ -266,4 +269,5 @@ class RaceManager:
             }
         configs["_round_scores"] = self.round_scores
         configs["_ghost_trail"] = self.ghost_trail
+        configs["_best_ever"] = self.best_ever_score
         return configs

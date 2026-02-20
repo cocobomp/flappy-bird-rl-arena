@@ -105,9 +105,9 @@ class AddBirdDialog:
         sx = 15
         sw = self.DIALOG_W - 30
         # Learning params
-        self.slider_epsilon = Slider(sx, 170, sw, 0.1, 1.0, 0.3, "Epsilon depart")
+        self.slider_epsilon = Slider(sx, 170, sw, 0.1, 1.0, 1.0, "Epsilon depart")
         self.slider_lr = Slider(sx, 196, sw, 0.0001, 0.01, 0.0005, "Learning rate")
-        self.slider_decay = Slider(sx, 222, sw, 0.990, 0.999, 0.995, "Epsilon decay")
+        self.slider_decay = Slider(sx, 222, sw, 0.990, 0.9999, 0.9995, "Epsilon decay")
         # Reward params
         self.slider_death = Slider(sx, 258, sw, 1.0, 50.0, 20.0, "Penalite mort")
         self.slider_pipe = Slider(sx, 284, sw, 0.0, 50.0, 10.0, "Bonus porte")

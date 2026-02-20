@@ -103,6 +103,7 @@ class DQNAgent(BaseAgent):
         batch_size: int = 64,
         tau: float = 0.005,
         train_every: int = 4,
+        train_intensity: int = 4,
     ):
         super().__init__(state_dim, action_dim)
 
@@ -116,6 +117,7 @@ class DQNAgent(BaseAgent):
         self.batch_size = batch_size
         self.tau = tau
         self.train_every = train_every
+        self.train_intensity = train_intensity
         self.lr = lr
 
         # Device selection
@@ -251,16 +253,17 @@ class DQNAgent(BaseAgent):
             len(self.replay_buffer) >= self.batch_size
             and self._step_count % self.train_every == 0
         ):
-            batch = self.replay_buffer.sample(self.batch_size)
-            loss, q_mean = self._compute_loss(*batch)
+            for _ in range(self.train_intensity):
+                batch = self.replay_buffer.sample(self.batch_size)
+                loss, q_mean = self._compute_loss(*batch)
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            # Gradient clipping
-            nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm=10.0)
-            self.optimizer.step()
+                self.optimizer.zero_grad()
+                loss.backward()
+                # Gradient clipping
+                nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm=10.0)
+                self.optimizer.step()
 
-            # Soft update target network
+            # Soft update target network (once per step, outside inner loop)
             self._update_target()
 
             metrics["loss"] = loss.item()
@@ -301,6 +304,7 @@ class DQNAgent(BaseAgent):
             "batch_size": int(self.batch_size),
             "tau": float(self.tau),
             "train_every": int(self.train_every),
+            "train_intensity": int(self.train_intensity),
             "lr": float(self.lr),
             "step_count": int(self._step_count),
         }
@@ -330,6 +334,7 @@ class DQNAgent(BaseAgent):
         self.gamma = params["gamma"]
         self.lr = params["lr"]
         self.tau = params["tau"]
+        self.train_intensity = params.get("train_intensity", 4)
         self._step_count = params["step_count"]
 
     def get_info(self) -> dict:

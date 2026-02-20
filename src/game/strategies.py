@@ -9,11 +9,16 @@ Physics recap (why this matters):
 So flapping is a BIG action. Smart strategies must account for velocity
 to avoid constant overshooting (which makes birds look "dumb").
 
-Observation format: [player_y, velocity, dist_next, gap_center]
-  player_y:  bird position / SCREEN_HEIGHT  (0=top, ~0.8=ground)
-  velocity:  bird vel_y / MAX_VEL_Y  (negative=up, positive=down)
-  dist_next: distance to pipe / SCREEN_WIDTH  (0=at pipe, 1=far)
-  gap_center: gap center / SCREEN_HEIGHT
+Observation format (8 features):
+  [player_y, velocity, dist_pipe1, top1, bottom1, dist_pipe2, top2, bottom2]
+  obs[0] player_y:   bird position / SCREEN_HEIGHT  (0=top, ~0.8=ground)
+  obs[1] velocity:   vel_y / MAX_VEL_Y  (negative=up, positive=down)
+  obs[2] dist_pipe1: distance to next pipe / SCREEN_WIDTH
+  obs[3] top1:       upper edge of next gap / SCREEN_HEIGHT
+  obs[4] bottom1:    lower edge of next gap / SCREEN_HEIGHT
+  obs[5] dist_pipe2: distance to second pipe / SCREEN_WIDTH
+  obs[6] top2:       upper edge of second gap / SCREEN_HEIGHT
+  obs[7] bottom2:    lower edge of second gap / SCREEN_HEIGHT
 """
 
 from abc import ABC, abstractmethod
@@ -80,7 +85,7 @@ class HeuristicStrategy(ExplorationStrategy):
     def explore(self, obs: np.ndarray) -> int:
         player_y = obs[0]
         velocity = obs[1]     # negative = going up
-        gap_center = obs[3]
+        gap_center = (obs[3] + obs[4]) / 2  # midpoint of top1 and bottom1
 
         diff = player_y - gap_center      # positive = below gap
         upward = max(0.0, -velocity)      # how fast going up (always >= 0)

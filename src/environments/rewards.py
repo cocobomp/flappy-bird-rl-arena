@@ -4,7 +4,17 @@ All reward functions inherit from RewardFunction ABC and implement the
 compute() method, which transforms the raw environment reward into a
 custom training signal.
 
-Observation indices (use_lidar=False, 12 features):
+Custom engine observation (8 features):
+    obs[0]: player_y          - player y position (normalized)
+    obs[1]: velocity           - player vertical velocity (normalized)
+    obs[2]: dist_pipe1         - horizontal distance to nearest pipe
+    obs[3]: top1               - upper edge of gap (nearest pipe)
+    obs[4]: bottom1            - lower edge of gap (nearest pipe)
+    obs[5]: dist_pipe2         - horizontal distance to second pipe
+    obs[6]: top2               - upper edge of gap (second pipe)
+    obs[7]: bottom2            - lower edge of gap (second pipe)
+
+Gymnasium observation (use_lidar=False, 12 features):
     obs[0]: last pipe horizontal position
     obs[1]: last pipe top y
     obs[2]: last pipe bottom y
@@ -72,7 +82,7 @@ class DistanceReward(RewardFunction):
     """Reward proportional to proximity to the next pipe.
 
     Supports both observation formats:
-      - Custom engine (4 features): obs[2] = dist_next (normalized)
+      - Custom engine (8 features): obs[2] = dist_pipe1 (normalized)
       - Gymnasium (12 features): obs[3] = next pipe horizontal position
     Returns -1000.0 on death.
     """
@@ -86,8 +96,8 @@ class DistanceReward(RewardFunction):
     ) -> float:
         if terminated:
             return -1000.0
-        if len(obs) <= 4:
-            # Custom engine: [player_y, vel, dist_next, gap_center]
+        if len(obs) != 12:
+            # Custom engine: [player_y, vel, dist_pipe1, top1, bottom1, ...]
             return 1.0 - float(obs[2])
         # Gymnasium 12-feature obs
         next_pipe_x = float(obs[3])
@@ -98,7 +108,8 @@ class CenteredReward(RewardFunction):
     """Bonus for staying centered in the pipe gap.
 
     Supports both observation formats:
-      - Custom engine (4 features): obs[0] = player_y, obs[3] = gap_center
+      - Custom engine (8 features): obs[0] = player_y,
+        gap_center = (obs[3] + obs[4]) / 2
       - Gymnasium (12 features): obs[4]/obs[5] = pipe gap, obs[9] = player_y
     Returns -1000.0 on death.
     """
@@ -113,10 +124,10 @@ class CenteredReward(RewardFunction):
         if terminated:
             return -1000.0
 
-        if len(obs) <= 4:
-            # Custom engine: [player_y, vel, dist_next, gap_center]
+        if len(obs) != 12:
+            # Custom engine: [player_y, vel, dist_pipe1, top1, bottom1, ...]
             player_y = float(obs[0])
-            gap_center = float(obs[3])
+            gap_center = (float(obs[3]) + float(obs[4])) / 2.0
         else:
             # Gymnasium 12-feature obs
             gap_center = (float(obs[4]) + float(obs[5])) / 2.0
@@ -141,7 +152,7 @@ class SmartReward(RewardFunction):
       - Survival: small constant bonus (+0.1)
       - Death: configurable penalty (default -5.0)
 
-    Supports both 4-feature (custom engine) and 12-feature (gymnasium) obs.
+    Supports both 8-feature (custom engine) and 12-feature (gymnasium) obs.
     """
 
     def __init__(self, death_penalty: float = 5.0):
@@ -157,11 +168,12 @@ class SmartReward(RewardFunction):
         if terminated:
             return -self.death_penalty
 
-        if len(obs) <= 4:
+        if len(obs) != 12:
+            # Custom engine: [player_y, vel, dist_pipe1, top1, bottom1, ...]
             player_y = float(obs[0])
             velocity = float(obs[1])
             dist_next = float(obs[2])
-            gap_center = float(obs[3])
+            gap_center = (float(obs[3]) + float(obs[4])) / 2.0
         else:
             gap_center = (float(obs[4]) + float(obs[5])) / 2.0
             player_y = float(obs[9])

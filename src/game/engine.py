@@ -219,25 +219,49 @@ class FlappyBirdEngine:
                 pipe["scored"] = True
 
     def get_observation(self, bird: Bird) -> np.ndarray:
-        """Get simple observation for a bird: (y, vel, dist_pipe, gap_center).
+        """Get observation for a bird: 8 features covering the two nearest pipes.
 
-        All values normalized to roughly [-1, 1] range.
+        Features (all normalized):
+            player_y   – bird.y / SCREEN_HEIGHT
+            velocity   – bird.vel_y / PLAYER_MAX_VEL_Y
+            dist_pipe1 – distance to next pipe / SCREEN_WIDTH
+            top1       – next pipe upper gap edge / SCREEN_HEIGHT
+            bottom1    – next pipe lower gap edge / SCREEN_HEIGHT
+            dist_pipe2 – distance to second pipe / SCREEN_WIDTH
+            top2       – second pipe upper gap edge / SCREEN_HEIGHT
+            bottom2    – second pipe lower gap edge / SCREEN_HEIGHT
         """
-        # Find next pipe (first pipe whose right edge is ahead of bird)
+        default_pipe = {"x": SCREEN_WIDTH, "gap_y": GROUND_Y // 2, "lower_y": GROUND_Y // 2 + PIPE_GAP}
+
+        # Find the two nearest pipes whose right edge is ahead of the bird
         next_pipe = None
+        second_pipe = None
         for pipe in self.pipes:
             if pipe["x"] + PIPE_WIDTH > bird.x:
-                next_pipe = pipe
-                break
+                if next_pipe is None:
+                    next_pipe = pipe
+                else:
+                    second_pipe = pipe
+                    break
+
         if next_pipe is None:
-            next_pipe = self.pipes[-1] if self.pipes else {"x": SCREEN_WIDTH, "gap_y": GROUND_Y // 2, "lower_y": GROUND_Y // 2 + PIPE_GAP}
+            next_pipe = self.pipes[-1] if self.pipes else default_pipe
+        if second_pipe is None:
+            second_pipe = next_pipe  # fallback: reuse first pipe
 
         player_y = bird.y / SCREEN_HEIGHT
         velocity = bird.vel_y / PLAYER_MAX_VEL_Y
-        dist_next = (next_pipe["x"] - bird.x) / SCREEN_WIDTH
-        gap_center = (next_pipe["gap_y"] + PIPE_GAP / 2) / SCREEN_HEIGHT
 
-        return np.array([player_y, velocity, dist_next, gap_center], dtype=np.float32)
+        dist_pipe1 = (next_pipe["x"] - bird.x) / SCREEN_WIDTH
+        top1 = next_pipe["gap_y"] / SCREEN_HEIGHT
+        bottom1 = (next_pipe["gap_y"] + PIPE_GAP) / SCREEN_HEIGHT
+
+        dist_pipe2 = (second_pipe["x"] - bird.x) / SCREEN_WIDTH
+        top2 = second_pipe["gap_y"] / SCREEN_HEIGHT
+        bottom2 = (second_pipe["gap_y"] + PIPE_GAP) / SCREEN_HEIGHT
+
+        return np.array([player_y, velocity, dist_pipe1, top1, bottom1,
+                         dist_pipe2, top2, bottom2], dtype=np.float32)
 
     def get_alive_count(self) -> int:
         return sum(1 for b in self.birds if b.alive)

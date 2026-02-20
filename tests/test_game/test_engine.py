@@ -62,7 +62,7 @@ class TestFlappyBirdEngine:
         obs_dict, reward_dict, done_dict, info = engine.step(actions)
         assert 0 in obs_dict
         assert 1 in obs_dict
-        assert obs_dict[0].shape == (4,)
+        assert obs_dict[0].shape == (8,)
 
     def test_all_dead_ends_round(self):
         engine = FlappyBirdEngine()
@@ -96,6 +96,6 @@ class TestFlappyBirdEngine:
         bird = engine.add_bird(color=(255, 0, 0))
         engine.reset()
         obs = engine.get_observation(bird)
-        # 4 features: player_y, velocity, dist_next_pipe, gap_center
-        assert len(obs) == 4
+        # 8 features: player_y, velocity, dist_pipe1, top1, bottom1, dist_pipe2, top2, bottom2
+        assert len(obs) == 8
         assert isinstance(obs[0], (float, np.floating))
