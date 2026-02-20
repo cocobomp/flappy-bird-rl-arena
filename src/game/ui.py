@@ -10,11 +10,14 @@ BIRD_COLORS = [
     (200, 80, 255), (255, 140, 50), (50, 220, 220), (255, 120, 180),
 ]
 
-ALGO_OPTIONS = ["q_learning", "dqn", "double_dqn"]
+ALGO_OPTIONS = ["q_learning", "dqn", "double_dqn", "dueling_dqn", "reinforce", "ppo"]
 REWARD_OPTIONS = ["basic", "distance", "centered", "smart"]
 STRATEGY_OPTIONS = ["random", "gravity", "heuristic", "guided"]
 
-ALGO_DISPLAY = {"q_learning": "QL", "dqn": "DQN", "double_dqn": "DDQN"}
+ALGO_DISPLAY = {
+    "q_learning": "QL", "dqn": "DQN", "double_dqn": "DDQN",
+    "dueling_dqn": "Duel", "reinforce": "REINF", "ppo": "PPO",
+}
 REWARD_DISPLAY = {
     "basic": "Basic", "distance": "Dist", "centered": "Center", "smart": "Smart",
 }
@@ -86,7 +89,7 @@ class Slider:
 class AddBirdDialog:
     """Modal dialog: algo, reward, strategy, and 8 parameter sliders."""
 
-    DIALOG_W = 420
+    DIALOG_W = 500
     DIALOG_H = 430
 
     def __init__(self, window_width=868, window_height=512):
@@ -177,8 +180,8 @@ class AddBirdDialog:
 
         # Algo buttons (drawn at x=80, y=y_off+5, h=22)
         for i in range(len(ALGO_OPTIONS)):
-            bx = 80 + i * 132
-            if bx <= rx <= bx + 124 and 30 <= ry <= 52:
+            bx = 80 + i * 67
+            if bx <= rx <= bx + 62 and 30 <= ry <= 52:
                 self.selected_algo = i
 
         # Reward buttons
@@ -222,7 +225,7 @@ class AddBirdDialog:
 
         # --- Algo ---
         self._draw_button_row(screen, dx, dy, 25, "Algo:", ALGO_OPTIONS,
-                              ALGO_DISPLAY, self.selected_algo, 132, 124)
+                              ALGO_DISPLAY, self.selected_algo, 67, 62)
         # --- Reward ---
         self._draw_button_row(screen, dx, dy, 55, "Reward:", REWARD_OPTIONS,
                               REWARD_DISPLAY, self.selected_reward, 100, 92)

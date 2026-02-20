@@ -2,7 +2,10 @@
 from dataclasses import dataclass, field
 import numpy as np
 
-from src.agents import QLearningAgent, DQNAgent, DoubleDQNAgent, BaseAgent
+from src.agents import (
+    QLearningAgent, DQNAgent, DoubleDQNAgent, DuelingDQNAgent,
+    ReinforceAgent, PPOAgent, BaseAgent,
+)
 from src.environments.rewards import (
     BasicReward, DistanceReward, CenteredReward, SmartReward, RewardFunction,
 )
@@ -14,6 +17,9 @@ AGENT_MAP = {
     "q_learning": QLearningAgent,
     "dqn": DQNAgent,
     "double_dqn": DoubleDQNAgent,
+    "dueling_dqn": DuelingDQNAgent,
+    "reinforce": ReinforceAgent,
+    "ppo": PPOAgent,
 }
 
 REWARD_MAP = {
@@ -58,21 +64,26 @@ class BirdEntry:
 
     def __post_init__(self):
         agent_cls = AGENT_MAP[self.algo]
+        common = dict(
+            state_dim=self.state_dim, action_dim=ACTION_DIM,
+            lr=self.lr, gamma=0.95,
+            epsilon_start=self.epsilon_start, epsilon_end=0.01,
+            epsilon_decay=self.epsilon_decay,
+        )
         if self.algo == "q_learning":
             self.agent = agent_cls(
-                state_dim=self.state_dim, action_dim=ACTION_DIM,
-                n_bins=10, lr=self.lr, gamma=0.99,
-                epsilon_start=self.epsilon_start, epsilon_end=0.01,
-                epsilon_decay=self.epsilon_decay,
+                **common, n_bins=10,
+            )
+        elif self.algo in ("reinforce", "ppo"):
+            self.agent = agent_cls(
+                **common, hidden_dims=[64, 32],
             )
         else:
+            # DQN, Double DQN, Dueling DQN
             self.agent = agent_cls(
-                state_dim=self.state_dim, action_dim=ACTION_DIM,
-                hidden_dims=[64, 32], lr=self.lr, gamma=0.95,
-                epsilon_start=self.epsilon_start, epsilon_end=0.01,
-                epsilon_decay=self.epsilon_decay,
-                buffer_size=10000, batch_size=64, tau=0.005, train_every=1,
-                train_intensity=2,
+                **common, hidden_dims=[64, 32],
+                buffer_size=10000, batch_size=64, tau=0.005,
+                train_every=1, train_intensity=2,
             )
         if self.reward == "smart":
             self.reward_fn = SmartReward(death_penalty=self.death_penalty)

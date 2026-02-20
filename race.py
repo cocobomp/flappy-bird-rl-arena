@@ -10,10 +10,10 @@ def main():
     renderer = GameRenderer()
     dialog = AddBirdDialog(window_width=WINDOW_WIDTH, window_height=WINDOW_HEIGHT)
 
-    # Start with 5 identical birds using the best strategy + evolution ON
-    for _ in range(5):
-        manager.add_bird(algo="dqn", reward="smart", strategy="guided")
-    manager.evolution_enabled = True
+    # Start with one bird per algorithm to compare them all
+    for algo in ("q_learning", "dqn", "double_dqn", "dueling_dqn", "reinforce", "ppo"):
+        manager.add_bird(algo=algo, reward="smart", strategy="guided")
+    manager.evolution_enabled = False
     manager.reset_round()
 
     buttons = [
