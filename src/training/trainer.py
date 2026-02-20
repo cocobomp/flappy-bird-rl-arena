@@ -137,6 +137,8 @@ class Trainer:
         save_every = self.config.training.get("save_every", 100)
         log_every = self.config.training.get("log_every", 10)
 
+        print(f"Training {self.config.experiment_name} for {episodes} episodes...")
+
         for episode in range(episodes):
             obs, info = env.reset()
             episode_reward = 0.0
@@ -171,6 +173,14 @@ class Trainer:
                 steps=steps,
                 agent_info=agent_info,
             )
+
+            # Periodic logging
+            if (episode + 1) % log_every == 0:
+                avg = logger.average_score(n=log_every)
+                eps = agent_info.get("epsilon", "N/A")
+                print(f"  Episode {episode + 1}/{episodes} | "
+                      f"Avg score: {avg:.1f} | Best: {logger.best_score} | "
+                      f"Epsilon: {eps}")
 
             # Periodic save
             if (episode + 1) % save_every == 0:

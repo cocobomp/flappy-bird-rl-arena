@@ -253,11 +253,11 @@ class DQNAgent(BaseAgent):
             metrics["loss"] = loss.item()
             metrics["q_mean"] = q_mean
 
-        # Decay epsilon
-        self.epsilon = max(
-            self.epsilon_end,
-            self.epsilon * self.epsilon_decay,
-        )
+            # Decay epsilon only when we actually train
+            self.epsilon = max(
+                self.epsilon_end,
+                self.epsilon * self.epsilon_decay,
+            )
 
         return metrics
 

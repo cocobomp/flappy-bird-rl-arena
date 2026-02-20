@@ -82,14 +82,21 @@ class TestDoubleDQNTrainStep:
         assert "q_mean" in result
         assert isinstance(result["loss"], float)
 
-    def test_epsilon_decays(self):
+    def test_epsilon_decays_on_training_update(self):
+        """Epsilon should only decay when an actual training update occurs."""
         agent = DoubleDQNAgent(
             state_dim=4, action_dim=2,
             epsilon_start=1.0, epsilon_decay=0.5, epsilon_end=0.01,
+            batch_size=4, buffer_size=100, train_every=1,
         )
         state = np.random.randn(4).astype(np.float32)
+        # Before buffer is full, epsilon stays at 1.0
         agent.train_step(state, 0, 1.0, state, False)
-        assert agent.epsilon == pytest.approx(0.5)
+        assert agent.epsilon == pytest.approx(1.0)
+        # Fill buffer to trigger training
+        for _ in range(3):
+            agent.train_step(state, 0, 1.0, state, False)
+        assert agent.epsilon < 1.0
 
     def test_uses_double_dqn_logic(self):
         """Verify the Double DQN uses online net for action selection
