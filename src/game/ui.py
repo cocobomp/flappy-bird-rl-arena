@@ -19,10 +19,15 @@ BIRD_COLORS = [
 
 ALGO_OPTIONS = ["q_learning", "dqn", "double_dqn"]
 REWARD_OPTIONS = ["basic", "distance", "centered", "smart"]
+STRATEGY_OPTIONS = ["random", "gravity", "heuristic", "guided"]
 
 ALGO_DISPLAY = {"q_learning": "QL", "dqn": "DQN", "double_dqn": "DDQN"}
 REWARD_DISPLAY = {
     "basic": "Basic", "distance": "Dist", "centered": "Center", "smart": "Smart",
+}
+STRATEGY_DISPLAY = {
+    "random": "Random", "gravity": "Gravity",
+    "heuristic": "Heurist.", "guided": "Guided",
 }
 
 ALGO_EXPLAIN = {
@@ -52,6 +57,13 @@ REWARD_EXPLAIN = {
         "Combine centrage + direction",
         "+ progression. Recommande !",
     ],
+}
+
+STRATEGY_EXPLAIN = {
+    "random": ["50/50 aleatoire. Flap(-9) >>", "gravite(+1) = monte toujours!"],
+    "gravity": ["15% de flap seulement.", "Compense le desequilibre physique."],
+    "heuristic": ["Flap si sous la porte,", "stop si au-dessus. +15% bruit."],
+    "guided": ["Gravity loin, heuristique pres", "de la porte. Recommande !"],
 }
 
 
@@ -90,7 +102,6 @@ class Slider:
         self.value = self.min_val + ratio * (self.max_val - self.min_val)
 
     def draw(self, surface, font, dx=0, dy=0):
-        # Format value
         if abs(self.value) < 0.01:
             val_str = f"{self.value:.4f}"
         elif abs(self.value) < 1:
@@ -101,20 +112,16 @@ class Slider:
         sx = self.x + dx
         sy = self.y + dy
 
-        # Label
         txt = font.render(f"{self.label}: {val_str}", True, (200, 200, 200))
         surface.blit(txt, (sx, sy - 14))
 
-        # Bar background
         bar = pygame.Rect(sx, sy, self.width, self.height)
         pygame.draw.rect(surface, (50, 50, 65), bar, border_radius=3)
 
-        # Fill
         ratio = (self.value - self.min_val) / (self.max_val - self.min_val)
         fill = pygame.Rect(sx, sy, max(1, int(self.width * ratio)), self.height)
         pygame.draw.rect(surface, (70, 110, 190), fill, border_radius=3)
 
-        # Handle
         hx = sx + int(self.width * ratio)
         hy = sy + self.height // 2
         pygame.draw.circle(surface, (200, 200, 220), (hx, hy), 7)
@@ -122,35 +129,35 @@ class Slider:
 
 
 class AddBirdDialog:
-    """Modal dialog to configure a new bird with algo, reward, and hyperparams."""
+    """Modal dialog to configure a new bird with algo, reward, strategy, and hyperparams."""
 
     DIALOG_W = 420
-    DIALOG_H = 470
+    DIALOG_H = 490
 
     def __init__(self, window_width=868, window_height=512):
         self.active = False
-        self.selected_algo = 1  # default: dqn
-        self.selected_reward = 3  # default: smart
+        self.selected_algo = 1      # default: dqn
+        self.selected_reward = 3    # default: smart
+        self.selected_strategy = 3  # default: guided
         self.font = None
         self.font_title = None
         self.font_small = None
         self.window_width = window_width
         self.window_height = window_height
 
-        # Dialog position (centered)
         self.dx = (window_width - self.DIALOG_W) // 2
         self.dy = (window_height - self.DIALOG_H) // 2
 
-        # Sliders (positions relative to dialog)
         sx = 15
         sw = self.DIALOG_W - 30
-        self.slider_epsilon = Slider(sx, 260, sw, 0.1, 1.0, 0.8, "Epsilon depart")
-        self.slider_lr = Slider(sx, 300, sw, 0.0001, 0.01, 0.0005, "Learning rate")
-        self.slider_decay = Slider(sx, 340, sw, 0.990, 0.999, 0.998, "Epsilon decay")
-        self.slider_death = Slider(sx, 380, sw, 1.0, 20.0, 5.0, "Penalite mort")
+        self.slider_epsilon = Slider(sx, 268, sw, 0.1, 1.0, 0.8, "Epsilon depart")
+        self.slider_lr = Slider(sx, 302, sw, 0.0001, 0.01, 0.0005, "Learning rate")
+        self.slider_decay = Slider(sx, 336, sw, 0.990, 0.999, 0.998, "Epsilon decay")
+        self.slider_death = Slider(sx, 370, sw, 1.0, 20.0, 5.0, "Penalite mort")
+        self.slider_pipe = Slider(sx, 404, sw, 0.0, 20.0, 10.0, "Bonus porte")
         self.sliders = [
             self.slider_epsilon, self.slider_lr,
-            self.slider_decay, self.slider_death,
+            self.slider_decay, self.slider_death, self.slider_pipe,
         ]
 
     def _init_fonts(self):
@@ -163,6 +170,7 @@ class AddBirdDialog:
         self.active = True
         self.selected_algo = 1
         self.selected_reward = 3
+        self.selected_strategy = 3
 
     def hide(self):
         self.active = False
@@ -170,13 +178,16 @@ class AddBirdDialog:
     def get_config(self) -> dict:
         algo = ALGO_OPTIONS[self.selected_algo]
         reward = REWARD_OPTIONS[self.selected_reward]
+        strategy = STRATEGY_OPTIONS[self.selected_strategy]
         return {
             "algo": algo,
             "reward": reward,
+            "strategy": strategy,
             "epsilon_start": round(self.slider_epsilon.value, 3),
             "lr": round(self.slider_lr.value, 5),
             "epsilon_decay": round(self.slider_decay.value, 4),
             "death_penalty": round(self.slider_death.value, 1),
+            "pipe_bonus": round(self.slider_pipe.value, 1),
         }
 
     def handle_event(self, event: pygame.event.Event) -> str | None:
@@ -191,38 +202,39 @@ class AddBirdDialog:
         dx, dy = self.dx, self.dy
         dw, dh = self.DIALOG_W, self.DIALOG_H
 
-        # Forward all mouse events to sliders
         for slider in self.sliders:
             slider.handle_event(event, dx, dy)
 
-        # Only process clicks for buttons
         if event.type != pygame.MOUSEBUTTONDOWN:
             return None
 
         mx, my = event.pos
-
-        # Outside dialog = cancel
         if not (dx <= mx <= dx + dw and dy <= my <= dy + dh):
             return "cancel"
 
-        # Relative to dialog
         rx = mx - dx
         ry = my - dy
 
-        # Algo buttons (y=48, 3 buttons)
+        # Algo buttons (y=48, h=26)
         for i in range(len(ALGO_OPTIONS)):
             bx = 15 + i * 132
-            if bx <= rx <= bx + 124 and 48 <= ry <= 78:
+            if bx <= rx <= bx + 124 and 48 <= ry <= 74:
                 self.selected_algo = i
 
-        # Reward buttons (y=150, 4 buttons)
+        # Reward buttons (y=118, h=26)
         for i in range(len(REWARD_OPTIONS)):
             bx = 15 + i * 100
-            if bx <= rx <= bx + 92 and 150 <= ry <= 180:
+            if bx <= rx <= bx + 92 and 118 <= ry <= 144:
                 self.selected_reward = i
 
-        # Confirm button (y=415)
-        if 20 <= rx <= dw - 20 and 415 <= ry <= 455:
+        # Strategy buttons (y=188, h=26)
+        for i in range(len(STRATEGY_OPTIONS)):
+            bx = 15 + i * 100
+            if bx <= rx <= bx + 92 and 188 <= ry <= 214:
+                self.selected_strategy = i
+
+        # Confirm button (y=440)
+        if 20 <= rx <= dw - 20 and 440 <= ry <= 476:
             return "confirm"
 
         return None
@@ -256,62 +268,84 @@ class AddBirdDialog:
         for i, algo in enumerate(ALGO_OPTIONS):
             bx = dx + 15 + i * 132
             by = dy + 48
-            rect = pygame.Rect(bx, by, 124, 30)
+            rect = pygame.Rect(bx, by, 124, 26)
             color = (80, 120, 200) if i == self.selected_algo else (60, 60, 80)
             pygame.draw.rect(screen, color, rect, border_radius=4)
             pygame.draw.rect(screen, (120, 120, 150), rect, 1, border_radius=4)
             txt = self.font.render(ALGO_DISPLAY[algo], True, (220, 220, 220))
-            screen.blit(txt, (bx + (124 - txt.get_width()) // 2, by + 7))
+            screen.blit(txt, (bx + (124 - txt.get_width()) // 2, by + 5))
 
-        # Algo explanation
         algo_key = ALGO_OPTIONS[self.selected_algo]
-        ey = dy + 82
+        ey = dy + 78
         for line in ALGO_EXPLAIN.get(algo_key, []):
             t = self.font_small.render(line, True, (150, 170, 200))
             screen.blit(t, (dx + 20, ey))
             ey += 13
 
         # Separator
-        pygame.draw.line(screen, (80, 80, 100), (dx + 15, dy + 135), (dx + dw - 15, dy + 135))
+        pygame.draw.line(screen, (80, 80, 100), (dx + 15, dy + 108), (dx + dw - 15, dy + 108))
 
         # --- Reward section ---
         lbl2 = self.font.render("Recompense:", True, (200, 200, 200))
-        screen.blit(lbl2, (dx + 15, dy + 138))
+        screen.blit(lbl2, (dx + 15, dy + 111))
 
         for i, reward in enumerate(REWARD_OPTIONS):
             bx = dx + 15 + i * 100
-            by = dy + 150
-            rect = pygame.Rect(bx, by, 92, 30)
+            by = dy + 118
+            rect = pygame.Rect(bx, by, 92, 26)
             color = (80, 120, 200) if i == self.selected_reward else (60, 60, 80)
             pygame.draw.rect(screen, color, rect, border_radius=4)
             pygame.draw.rect(screen, (120, 120, 150), rect, 1, border_radius=4)
             txt = self.font.render(REWARD_DISPLAY[reward], True, (220, 220, 220))
-            screen.blit(txt, (bx + (92 - txt.get_width()) // 2, by + 7))
+            screen.blit(txt, (bx + (92 - txt.get_width()) // 2, by + 5))
 
-        # Reward explanation
         rew_key = REWARD_OPTIONS[self.selected_reward]
-        ey = dy + 184
+        ey = dy + 148
         for line in REWARD_EXPLAIN.get(rew_key, []):
             t = self.font_small.render(line, True, (150, 170, 200))
             screen.blit(t, (dx + 20, ey))
             ey += 13
 
         # Separator
-        pygame.draw.line(screen, (80, 80, 100), (dx + 15, dy + 220), (dx + dw - 15, dy + 220))
+        pygame.draw.line(screen, (80, 80, 100), (dx + 15, dy + 174), (dx + dw - 15, dy + 174))
+
+        # --- Strategy section ---
+        lbl3 = self.font.render("Strategie d'exploration:", True, (200, 200, 200))
+        screen.blit(lbl3, (dx + 15, dy + 177))
+
+        for i, strat in enumerate(STRATEGY_OPTIONS):
+            bx = dx + 15 + i * 100
+            by = dy + 188
+            rect = pygame.Rect(bx, by, 92, 26)
+            color = (80, 120, 200) if i == self.selected_strategy else (60, 60, 80)
+            pygame.draw.rect(screen, color, rect, border_radius=4)
+            pygame.draw.rect(screen, (120, 120, 150), rect, 1, border_radius=4)
+            txt = self.font.render(STRATEGY_DISPLAY[strat], True, (220, 220, 220))
+            screen.blit(txt, (bx + (92 - txt.get_width()) // 2, by + 5))
+
+        strat_key = STRATEGY_OPTIONS[self.selected_strategy]
+        ey = dy + 218
+        for line in STRATEGY_EXPLAIN.get(strat_key, []):
+            t = self.font_small.render(line, True, (150, 170, 200))
+            screen.blit(t, (dx + 20, ey))
+            ey += 13
+
+        # Separator
+        pygame.draw.line(screen, (80, 80, 100), (dx + 15, dy + 244), (dx + dw - 15, dy + 244))
 
         # --- Hyperparameters ---
-        lbl3 = self.font.render("Hyperparametres:", True, (200, 200, 200))
-        screen.blit(lbl3, (dx + 15, dy + 225))
+        lbl4 = self.font.render("Hyperparametres:", True, (200, 200, 200))
+        screen.blit(lbl4, (dx + 15, dy + 247))
 
         for slider in self.sliders:
             slider.draw(screen, self.font_small, dx, dy)
 
         # --- Confirm button ---
-        confirm_rect = pygame.Rect(dx + 20, dy + 415, dw - 40, 40)
+        confirm_rect = pygame.Rect(dx + 20, dy + 440, dw - 40, 36)
         pygame.draw.rect(screen, (40, 160, 80), confirm_rect, border_radius=6)
         pygame.draw.rect(screen, (80, 200, 120), confirm_rect, 1, border_radius=6)
         ctxt = self.font_title.render("AJOUTER", True, (255, 255, 255))
         screen.blit(ctxt, (
             confirm_rect.x + (confirm_rect.width - ctxt.get_width()) // 2,
-            confirm_rect.y + 10,
+            confirm_rect.y + 8,
         ))
