@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
+import flappy_bird_gymnasium  # noqa: F401 — registers FlappyBird-v0
 import gymnasium
 import numpy as np
 

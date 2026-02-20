@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 
+import flappy_bird_gymnasium  # noqa: F401 — registers FlappyBird-v0
 import gymnasium
 import pygame
 
