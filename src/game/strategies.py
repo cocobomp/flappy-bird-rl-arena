@@ -94,24 +94,21 @@ class HeuristicStrategy(ExplorationStrategy):
 
 
 class GuidedStrategy(ExplorationStrategy):
-    """Best of both: gravity-aware far from pipe, PD-heuristic near pipe.
+    """Always-on PD-controller heuristic with low noise.
 
-    Far from pipe: stay alive with low flap rate.
-    Near pipe: use velocity-aware heuristic to thread the gap.
+    Uses the velocity-aware heuristic at ALL distances (not just near pipes).
+    Previous version switched to random 12% flap far from pipes, which caused
+    the bird to drift wildly between pipes and die at the second gap.
     """
 
     name = "Guided"
 
-    def __init__(self, flap_prob: float = 0.12, noise: float = 0.10,
+    def __init__(self, flap_prob: float = 0.12, noise: float = 0.02,
                  threshold: float = 0.04, **_kwargs):
-        self.gravity = GravityAwareStrategy(flap_prob=flap_prob)
         self.heuristic = HeuristicStrategy(noise=noise, threshold=threshold)
 
     def explore(self, obs: np.ndarray) -> int:
-        dist = obs[2]
-        if dist < 0.5:
-            return self.heuristic.explore(obs)
-        return self.gravity.explore(obs)
+        return self.heuristic.explore(obs)
 
 
 STRATEGY_MAP = {

@@ -5,6 +5,7 @@ import numpy as np
 from src.agents import (
     QLearningAgent, DQNAgent, DoubleDQNAgent, DuelingDQNAgent,
     ReinforceAgent, PPOAgent, BaseAgent,
+    RandomForestAgent, GradientBoostAgent, KNNAgent, SVMAgent,
 )
 from src.environments.rewards import (
     BasicReward, DistanceReward, CenteredReward, SmartReward, RewardFunction,
@@ -20,6 +21,10 @@ AGENT_MAP = {
     "dueling_dqn": DuelingDQNAgent,
     "reinforce": ReinforceAgent,
     "ppo": PPOAgent,
+    "random_forest": RandomForestAgent,
+    "gradient_boost": GradientBoostAgent,
+    "knn": KNNAgent,
+    "svm": SVMAgent,
 }
 
 REWARD_MAP = {
@@ -48,7 +53,7 @@ class BirdEntry:
     pipe_bonus: float = 10.0
     alive_reward: float = 0.05
     flap_threshold: float = 0.04
-    strategy_noise: float = 0.10
+    strategy_noise: float = 0.02
     agent: BaseAgent = field(init=False)
     reward_fn: RewardFunction = field(init=False)
     strategy: ExplorationStrategy = field(init=False)
@@ -61,27 +66,32 @@ class BirdEntry:
     last_exploring: bool = field(default=True, init=False)
     last_q_values: np.ndarray | None = field(default=None, init=False)
     last_activations: list | None = field(default=None, init=False)
+    last_viz_data: dict | None = field(default=None, init=False)
 
     def __post_init__(self):
         agent_cls = AGENT_MAP[self.algo]
         common = dict(
             state_dim=self.state_dim, action_dim=ACTION_DIM,
-            lr=self.lr, gamma=0.95,
             epsilon_start=self.epsilon_start, epsilon_end=0.01,
             epsilon_decay=self.epsilon_decay,
         )
-        if self.algo == "q_learning":
+        if self.algo in ("random_forest", "gradient_boost", "knn", "svm"):
             self.agent = agent_cls(
-                **common, n_bins=10,
+                **common, max_samples=5000, retrain_every=200, min_samples=50,
+            )
+        elif self.algo == "q_learning":
+            self.agent = agent_cls(
+                **common, lr=self.lr, gamma=0.95, n_bins=10,
             )
         elif self.algo in ("reinforce", "ppo"):
             self.agent = agent_cls(
-                **common, hidden_dims=[64, 32],
+                **common, lr=self.lr, gamma=0.95, hidden_dims=[64, 32],
             )
         else:
             # DQN, Double DQN, Dueling DQN
             self.agent = agent_cls(
-                **common, hidden_dims=[64, 32],
+                **common, lr=self.lr, gamma=0.95,
+                hidden_dims=[64, 32],
                 buffer_size=10000, batch_size=64, tau=0.005,
                 train_every=1, train_intensity=2,
             )
@@ -220,6 +230,16 @@ class RaceManager:
                     entry.last_q_values = entry.agent._get_q_values(obs)
                     if hasattr(entry.agent, 'get_activations'):
                         entry.last_activations = entry.agent.get_activations(obs)
+                # Feature importances for sklearn agents
+                if hasattr(entry.agent, 'get_feature_importances'):
+                    importances = entry.agent.get_feature_importances()
+                    entry.last_viz_data = {
+                        "type": entry.algo,
+                        "importances": importances,
+                        "confidence": entry.last_q_values,
+                        "trained": getattr(entry.agent, '_trained', False),
+                        "samples": len(getattr(entry.agent, '_buffer', [])),
+                    }
                 elif hasattr(entry.agent, 'q_table') and hasattr(entry.agent, '_discretize'):
                     key = entry.agent._discretize(obs)
                     entry.last_q_values = entry.agent.q_table[key].copy()
@@ -276,6 +296,7 @@ class RaceManager:
                 "generation": entry.generation,
                 "parent_color": entry.parent_color,
                 "activations": entry.last_activations,
+                "viz_data": entry.last_viz_data,
                 "index": i,
             }
         configs["_round_scores"] = self.round_scores

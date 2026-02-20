@@ -10,13 +10,18 @@ BIRD_COLORS = [
     (200, 80, 255), (255, 140, 50), (50, 220, 220), (255, 120, 180),
 ]
 
-ALGO_OPTIONS = ["q_learning", "dqn", "double_dqn", "dueling_dqn", "reinforce", "ppo"]
+ALGO_OPTIONS = [
+    "q_learning", "dqn", "double_dqn", "dueling_dqn", "reinforce", "ppo",
+    "random_forest", "gradient_boost", "knn", "svm",
+]
 REWARD_OPTIONS = ["basic", "distance", "centered", "smart"]
 STRATEGY_OPTIONS = ["random", "gravity", "heuristic", "guided"]
 
 ALGO_DISPLAY = {
     "q_learning": "QL", "dqn": "DQN", "double_dqn": "DDQN",
     "dueling_dqn": "Duel", "reinforce": "REINF", "ppo": "PPO",
+    "random_forest": "RF", "gradient_boost": "GBoost",
+    "knn": "KNN", "svm": "SVM",
 }
 REWARD_DISPLAY = {
     "basic": "Basic", "distance": "Dist", "centered": "Center", "smart": "Smart",
@@ -90,7 +95,7 @@ class AddBirdDialog:
     """Modal dialog: algo, reward, strategy, and 8 parameter sliders."""
 
     DIALOG_W = 500
-    DIALOG_H = 430
+    DIALOG_H = 460
 
     def __init__(self, window_width=868, window_height=512):
         self.active = False
@@ -107,17 +112,17 @@ class AddBirdDialog:
 
         sx = 15
         sw = self.DIALOG_W - 30
-        # Learning params
-        self.slider_epsilon = Slider(sx, 170, sw, 0.1, 1.0, 1.0, "Epsilon depart")
-        self.slider_lr = Slider(sx, 196, sw, 0.0001, 0.01, 0.0003, "Learning rate")
-        self.slider_decay = Slider(sx, 222, sw, 0.990, 0.99999, 0.99995, "Epsilon decay")
+        # Learning params (shifted down by 30 for 2-row algo buttons)
+        self.slider_epsilon = Slider(sx, 200, sw, 0.1, 1.0, 1.0, "Epsilon depart")
+        self.slider_lr = Slider(sx, 226, sw, 0.0001, 0.01, 0.0003, "Learning rate")
+        self.slider_decay = Slider(sx, 252, sw, 0.990, 0.99999, 0.99995, "Epsilon decay")
         # Reward params
-        self.slider_death = Slider(sx, 258, sw, 1.0, 50.0, 20.0, "Penalite mort")
-        self.slider_pipe = Slider(sx, 284, sw, 0.0, 50.0, 10.0, "Bonus porte")
-        self.slider_alive = Slider(sx, 310, sw, 0.0, 2.0, 0.05, "Reward survie")
+        self.slider_death = Slider(sx, 288, sw, 1.0, 50.0, 20.0, "Penalite mort")
+        self.slider_pipe = Slider(sx, 314, sw, 0.0, 50.0, 10.0, "Bonus porte")
+        self.slider_alive = Slider(sx, 340, sw, 0.0, 2.0, 0.05, "Reward survie")
         # Strategy params
-        self.slider_threshold = Slider(sx, 346, sw, 0.01, 0.12, 0.04, "Seuil flap")
-        self.slider_noise = Slider(sx, 372, sw, 0.0, 0.30, 0.10, "Bruit strategie")
+        self.slider_threshold = Slider(sx, 376, sw, 0.01, 0.12, 0.04, "Seuil flap")
+        self.slider_noise = Slider(sx, 402, sw, 0.0, 0.30, 0.02, "Bruit strategie")
 
         self.sliders = [
             self.slider_epsilon, self.slider_lr, self.slider_decay,
@@ -178,26 +183,31 @@ class AddBirdDialog:
 
         rx, ry = mx - dx, my - dy
 
-        # Algo buttons (drawn at x=80, y=y_off+5, h=22)
-        for i in range(len(ALGO_OPTIONS)):
-            bx = 80 + i * 67
-            if bx <= rx <= bx + 62 and 30 <= ry <= 52:
+        # Algo row 1 (RL): indices 0-5, y=30..52
+        for i in range(min(6, len(ALGO_OPTIONS))):
+            bx = 15 + i * 78
+            if bx <= rx <= bx + 73 and 30 <= ry <= 52:
+                self.selected_algo = i
+        # Algo row 2 (ML): indices 6-9, y=56..78
+        for i in range(6, len(ALGO_OPTIONS)):
+            bx = 15 + (i - 6) * 78
+            if bx <= rx <= bx + 73 and 56 <= ry <= 78:
                 self.selected_algo = i
 
-        # Reward buttons
+        # Reward buttons y=92..114
         for i in range(len(REWARD_OPTIONS)):
             bx = 80 + i * 100
-            if bx <= rx <= bx + 92 and 60 <= ry <= 82:
+            if bx <= rx <= bx + 92 and 92 <= ry <= 114:
                 self.selected_reward = i
 
-        # Strategy buttons
+        # Strategy buttons y=122..144
         for i in range(len(STRATEGY_OPTIONS)):
             bx = 80 + i * 100
-            if bx <= rx <= bx + 92 and 90 <= ry <= 112:
+            if bx <= rx <= bx + 92 and 122 <= ry <= 144:
                 self.selected_strategy = i
 
-        # Confirm (y=396..426)
-        if 20 <= rx <= dw - 20 and 396 <= ry <= 426:
+        # Confirm (y=426..456)
+        if 20 <= rx <= dw - 20 and 426 <= ry <= 456:
             return "confirm"
 
         return None
@@ -223,29 +233,35 @@ class AddBirdDialog:
         t = self.font_title.render("Ajouter un Oiseau", True, (0, 255, 120))
         screen.blit(t, (dx + 15, dy + 6))
 
-        # --- Algo ---
-        self._draw_button_row(screen, dx, dy, 25, "Algo:", ALGO_OPTIONS,
-                              ALGO_DISPLAY, self.selected_algo, 67, 62)
+        # --- Algo (2 rows) ---
+        lt = self.font.render("Algo:", True, (200, 200, 200))
+        screen.blit(lt, (dx + 15, dy + 25))
+        # Row 1: RL algorithms (indices 0-5)
+        self._draw_button_row_flat(screen, dx, dy, 30, ALGO_OPTIONS[:6],
+                                   ALGO_DISPLAY, self.selected_algo, 0, 78, 73)
+        # Row 2: ML algorithms (indices 6+)
+        self._draw_button_row_flat(screen, dx, dy, 56, ALGO_OPTIONS[6:],
+                                   ALGO_DISPLAY, self.selected_algo, 6, 78, 73)
         # --- Reward ---
-        self._draw_button_row(screen, dx, dy, 55, "Reward:", REWARD_OPTIONS,
+        self._draw_button_row(screen, dx, dy, 85, "Reward:", REWARD_OPTIONS,
                               REWARD_DISPLAY, self.selected_reward, 100, 92)
         # --- Strategy ---
-        self._draw_button_row(screen, dx, dy, 85, "Strat:", STRATEGY_OPTIONS,
+        self._draw_button_row(screen, dx, dy, 115, "Strat:", STRATEGY_OPTIONS,
                               STRATEGY_DISPLAY, self.selected_strategy, 100, 92)
 
         # Strategy explanation (single line)
         strat_key = STRATEGY_OPTIONS[self.selected_strategy]
         expl = STRATEGY_EXPLAIN.get(strat_key, "")
         et = self.font_small.render(expl, True, (140, 160, 200))
-        screen.blit(et, (dx + 18, dy + 116))
+        screen.blit(et, (dx + 18, dy + 148))
 
         # Separator
         pygame.draw.line(screen, (80, 80, 100),
-                         (dx + 15, dy + 132), (dx + dw - 15, dy + 132))
+                         (dx + 15, dy + 162), (dx + dw - 15, dy + 162))
 
         # --- Params label ---
         lbl = self.font.render("Apprentissage:", True, (180, 180, 200))
-        screen.blit(lbl, (dx + 15, dy + 136))
+        screen.blit(lbl, (dx + 15, dy + 166))
 
         # Draw first 3 sliders (learning)
         for s in self.sliders[:3]:
@@ -253,7 +269,7 @@ class AddBirdDialog:
 
         # Reward params label
         lbl2 = self.font.render("Recompenses:", True, (180, 180, 200))
-        screen.blit(lbl2, (dx + 15, dy + 240))
+        screen.blit(lbl2, (dx + 15, dy + 270))
 
         # Draw reward sliders
         for s in self.sliders[3:6]:
@@ -261,18 +277,30 @@ class AddBirdDialog:
 
         # Strategy params label
         lbl3 = self.font.render("Strategie:", True, (180, 180, 200))
-        screen.blit(lbl3, (dx + 15, dy + 328))
+        screen.blit(lbl3, (dx + 15, dy + 358))
 
         # Draw strategy sliders
         for s in self.sliders[6:]:
             s.draw(screen, self.font_small, dx, dy)
 
         # Confirm button
-        cr = pygame.Rect(dx + 20, dy + 396, dw - 40, 30)
+        cr = pygame.Rect(dx + 20, dy + 426, dw - 40, 30)
         pygame.draw.rect(screen, (40, 160, 80), cr, border_radius=6)
         pygame.draw.rect(screen, (80, 200, 120), cr, 1, border_radius=6)
         ct = self.font_title.render("AJOUTER", True, (255, 255, 255))
         screen.blit(ct, (cr.x + (cr.width - ct.get_width()) // 2, cr.y + 6))
+
+    def _draw_button_row_flat(self, screen, dx, dy, y_off, options,
+                              display, selected, index_offset, spacing, btn_w):
+        """Draw a row of buttons without label (for multi-row algo layout)."""
+        by = dy + y_off
+        for i, opt in enumerate(options):
+            bx = dx + 15 + i * spacing
+            rect = pygame.Rect(bx, by, btn_w, 22)
+            color = (80, 120, 200) if (i + index_offset) == selected else (55, 55, 75)
+            pygame.draw.rect(screen, color, rect, border_radius=3)
+            txt = self.font_small.render(display[opt], True, (220, 220, 220))
+            screen.blit(txt, (bx + (btn_w - txt.get_width()) // 2, by + 5))
 
     def _draw_button_row(self, screen, dx, dy, y_off, label, options,
                          display, selected, spacing, btn_w):

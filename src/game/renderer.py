@@ -400,26 +400,33 @@ class GameRenderer:
                 edu.blit(t, (14, y))
                 y += 11
 
-        # --- Neural Network Visualization ---
+        # --- Algorithm Visualization (best bird) ---
         activations = None
+        viz_data = None
         best_bird_id = None
         best_score = -1
         for k, v in bird_configs.items():
             if isinstance(k, str) and k.startswith("_"):
                 continue
-            if isinstance(v, dict) and v.get("activations"):
+            if isinstance(v, dict):
                 sc = v.get("best_score", 0)
                 if sc > best_score:
                     best_score = sc
-                    activations = v["activations"]
+                    activations = v.get("activations")
+                    viz_data = v.get("viz_data")
                     best_bird_id = k
 
-        if activations and len(activations) >= 3:
+        if viz_data and viz_data.get("importances") is not None:
+            self._draw_feature_importances(edu, 10, y, EDUCATION_WIDTH - 20, viz_data)
+            y += 115
+        elif viz_data and viz_data.get("trained"):
+            self._draw_confidence_meter(edu, 10, y, EDUCATION_WIDTH - 20, viz_data)
+            y += 50
+        elif activations and len(activations) >= 3:
             self._draw_neural_net(edu, 10, y, EDUCATION_WIDTH - 20, 200, activations)
             y += 205
         else:
-            # Placeholder
-            t = self.font_small.render("(en attente du reseau...)", True, DIM_COLOR)
+            t = self.font_small.render("(en attente du modele...)", True, DIM_COLOR)
             edu.blit(t, (14, y + 10))
             y += 35
 
@@ -516,6 +523,80 @@ class GameRenderer:
             vt = self.font_tiny.render(f"{val:.2f}", True, TEXT_COLOR)
             surface.blit(vt, (bx + bar_w + 4, y))
             y += 11
+
+    def _draw_feature_importances(self, surface, x, y, w, viz_data):
+        """Draw feature importances + confidence for tree-based sklearn agents."""
+        algo_type = viz_data.get("type", "?")
+        labels_map = {
+            "random_forest": "Foret Aleatoire",
+            "gradient_boost": "Gradient Boosting",
+        }
+        title = labels_map.get(algo_type, algo_type)
+        t = self.font.render(f"{title} (live)", True, SECTION_COLOR)
+        surface.blit(t, (x + 5, y + 2))
+        y_off = y + 18
+
+        importances = viz_data["importances"]
+        obs_labels = ["dy1", "vel", "d1", "dy2", "d2"]
+        max_imp = max(importances) if max(importances) > 0 else 1.0
+        bar_w = w - 90
+
+        for i, (imp, lbl) in enumerate(zip(importances, obs_labels)):
+            lt = self.font_tiny.render(lbl, True, DIM_COLOR)
+            surface.blit(lt, (x + 5, y_off))
+            bx = x + 40
+            bar_rect = pygame.Rect(bx, y_off + 1, bar_w, 9)
+            pygame.draw.rect(surface, (30, 33, 45), bar_rect, border_radius=2)
+            fill_w = int((imp / max_imp) * bar_w)
+            if fill_w > 0:
+                r = int(180 + 75 * (imp / max_imp))
+                g = int(100 + 80 * (imp / max_imp))
+                fill = pygame.Rect(bx, y_off + 1, fill_w, 9)
+                pygame.draw.rect(surface, (min(255, r), min(255, g), 40), fill, border_radius=2)
+            vt = self.font_tiny.render(f"{imp:.3f}", True, TEXT_COLOR)
+            surface.blit(vt, (bx + bar_w + 4, y_off))
+            y_off += 12
+
+        # Confidence meter
+        y_off += 4
+        self._draw_confidence_meter(surface, x, y_off, w, viz_data)
+
+    def _draw_confidence_meter(self, surface, x, y, w, viz_data):
+        """Draw a horizontal confidence bar: P(noop) | P(flap)."""
+        confidence = viz_data.get("confidence")
+        if confidence is None:
+            return
+        t = self.font_tiny.render("Confiance du modele:", True, DIM_COLOR)
+        surface.blit(t, (x + 5, y))
+        bar_y = y + 12
+        bar_h = 14
+        bar_rect = pygame.Rect(x + 5, bar_y, w - 10, bar_h)
+        pygame.draw.rect(surface, (30, 33, 45), bar_rect, border_radius=3)
+
+        p_noop = float(confidence[0])
+        p_flap = float(confidence[1]) if len(confidence) > 1 else 1.0 - p_noop
+        bar_inner_w = w - 14
+
+        noop_w = int(p_noop * bar_inner_w)
+        if noop_w > 0:
+            noop_rect = pygame.Rect(x + 7, bar_y + 1, noop_w, bar_h - 2)
+            pygame.draw.rect(surface, (80, 130, 255), noop_rect, border_radius=2)
+        flap_w = bar_inner_w - noop_w
+        if flap_w > 0:
+            flap_rect = pygame.Rect(x + 7 + noop_w, bar_y + 1, flap_w, bar_h - 2)
+            pygame.draw.rect(surface, (255, 140, 50), flap_rect, border_radius=2)
+
+        surface.blit(self.font_tiny.render(f"noop {p_noop:.0%}", True, (200, 200, 255)),
+                     (x + 10, bar_y + 1))
+        flap_txt = self.font_tiny.render(f"{p_flap:.0%} FLAP", True, (255, 200, 150))
+        surface.blit(flap_txt, (x + w - 10 - flap_txt.get_width(), bar_y + 1))
+
+        # Samples count
+        samples = viz_data.get("samples", 0)
+        trained = viz_data.get("trained", False)
+        status = f"Entraine ({samples} echant.)" if trained else f"Collecte... ({samples})"
+        st = self.font_tiny.render(status, True, ALIVE_COLOR if trained else DIM_COLOR)
+        surface.blit(st, (x + 5, bar_y + bar_h + 2))
 
     def _draw_neural_net(self, surface, x, y, w, h, activations):
         """Draw a live neural network diagram with colored activations."""
