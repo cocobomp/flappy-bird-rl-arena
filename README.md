@@ -1,47 +1,8 @@
-# RL Flappy Bird Race
+# Flappy Bird RL Arena
 
-Projet d'exploration du **reinforcement learning** sur Flappy Bird. Comparez visuellement plusieurs algorithmes RL (Q-Learning, DQN, Double DQN) avec différentes fonctions de reward, le tout en temps réel dans une course multi-oiseaux.
+Projet pedagogique de **reinforcement learning** applique a Flappy Bird. Plusieurs agents RL (Q-Learning, DQN, Double DQN) s'affrontent en temps reel dans une course multi-oiseaux, avec des parametres entierement configurables.
 
-## Apercu
-
-Le mode **Race** fait jouer plusieurs agents RL en simultané dans le meme environnement Flappy Bird. Chaque oiseau est piloté par son propre agent qui apprend en temps réel. Un panneau latéral affiche les stats, les coordonnées du prochain tuyau, et des tooltips explicatifs au survol.
-
-### Algorithmes disponibles
-
-| Algo | Description |
-|------|-------------|
-| **Q-Learning** | Méthode tabulaire avec discrétisation des états |
-| **DQN** | Deep Q-Network avec experience replay et target network |
-| **Double DQN** | Variante du DQN qui réduit la surestimation des Q-valeurs |
-
-### Fonctions de reward
-
-| Reward | Description |
-|--------|-------------|
-| **Basic** | +0.1 en vie, -1.0 à la mort |
-| **Distance** | Bonus proportionnel à la proximité du prochain tuyau |
-| **Centered** | Bonus pour rester centré dans l'ouverture du tuyau |
-
-## Installation
-
-```bash
-# Cloner le projet
-git clone <url-du-repo>
-cd ReinforcementLearning
-
-# Créer un environnement virtuel
-python3.11 -m venv .venv
-source .venv/bin/activate
-
-# Installer les dépendances
-pip install -r requirements.txt
-```
-
-> **Note** : Python 3.11+ est recommandé. PyTorch (`torch`) est nécessaire pour DQN/Double DQN.
-
-## Lancer le jeu
-
-### Mode Race (recommandé)
+## Demo
 
 Lance une course multi-oiseaux avec interface interactive :
 
@@ -49,74 +10,103 @@ Lance une course multi-oiseaux avec interface interactive :
 python race.py
 ```
 
-**Controles :**
-- `Espace` : Pause / Reprendre
-- `Fleche haut` : Augmenter la vitesse (x2, x4, x8)
-- `Fleche bas` : Diminuer la vitesse
-- `Echap` : Quitter
-- Clic sur **+ Add Bird** dans le panneau pour ajouter un oiseau avec l'algo et la reward de votre choix
+3 oiseaux DQN demarrent avec des strategies d'exploration differentes. Ajoutez-en d'autres via le dialog, modifiez les parametres en live, et observez l'apprentissage.
 
-### Mode Entrainement
+## Fonctionnalites
 
-Entraîne un agent sur Flappy Bird (utilise `flappy-bird-gymnasium`) :
+### Algorithmes RL
+
+| Algo | Description |
+|------|-------------|
+| **Q-Learning** | Methode tabulaire avec discretisation des etats |
+| **DQN** | Deep Q-Network avec experience replay et target network |
+| **Double DQN** | Variante du DQN qui reduit la surestimation des Q-valeurs |
+
+### Fonctions de reward
+
+| Reward | Description |
+|--------|-------------|
+| **Basic** | +0.1 en vie, -1.0 a la mort |
+| **Distance** | Bonus proportionnel a la proximite du prochain tuyau |
+| **Centered** | Bonus pour rester centre dans l'ouverture du tuyau |
+| **Smart** | Centrage + direction + progression + penalite mort configurable |
+
+### Strategies d'exploration
+
+| Strategie | Description |
+|-----------|-------------|
+| **Random** | 50/50 aleatoire (demo, peu efficace) |
+| **Gravity** | 12% de flap — compense l'asymetrie flap(-9) vs gravite(+1) |
+| **Heuristic** | Controleur PD : tient compte de la position ET de la velocite |
+| **Guided** | Gravity loin du tuyau + Heuristic pres (recommande) |
+
+### Parametres configurables
+
+Chaque oiseau peut etre configure independamment via le dialog :
+
+- **Apprentissage** : epsilon initial, learning rate, epsilon decay
+- **Recompenses** : penalite de mort, bonus par tuyau, reward de survie
+- **Strategie** : seuil de flap, bruit aleatoire
+
+### Interface interactive
+
+- Panneau lateral avec stats en temps reel par oiseau
+- Q-values affichees (visualisation de l'apprentissage)
+- Badge EXPLORE / APPREND (exploration vs exploitation)
+- Boutons par oiseau : changer strategie, diviser epsilon, supprimer
+- Slider de vitesse (x1 a x64)
+- Panneau pedagogique expliquant les concepts RL
+- Tooltips au survol sur les algorithmes et rewards
+
+## Controles
+
+| Touche | Action |
+|--------|--------|
+| `Espace` | Pause / Reprendre |
+| `Fleche haut` | Vitesse x2 |
+| `Fleche bas` | Vitesse /2 |
+| `B` | Boost : epsilon = 0.05 pour tous |
+| `Echap` | Quitter |
+
+## Installation
 
 ```bash
-# Entraînement DQN par défaut (1000 épisodes)
-python main.py train --config configs/default.yaml --save
+git clone https://github.com/cocobomp/flappy-bird-rl-arena.git
+cd flappy-bird-rl-arena
 
-# Entraînement Q-Learning
-python main.py train --config configs/q_learning_simple_basic.yaml --save
-
-# Entraînement Double DQN
-python main.py train --config configs/double_dqn_simple_distance.yaml --save
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### Mode Visualisation
+> Python 3.11+ recommande. PyTorch necessaire pour DQN / Double DQN.
 
-Rejoue un agent entraîné dans le jeu Flappy Bird original :
+## Mode entrainement (agent unique)
 
 ```bash
+python main.py train --config configs/default.yaml --save
 python main.py play --config configs/dqn_simple_basic.yaml --model models/dqn_simple_basic --episodes 5
 ```
 
-## Structure du projet
+## Structure
 
 ```
-ReinforcementLearning/
-├── race.py                    # Point d'entrée mode Race (multi-oiseaux)
-├── main.py                    # Point d'entrée train/play (agent unique)
+├── race.py                     # Mode Race (multi-oiseaux)
+├── main.py                     # Mode train/play (agent unique)
 ├── requirements.txt
-├── configs/                   # Configurations YAML des expériences
-│   ├── default.yaml
-│   ├── dqn_simple_basic.yaml
-│   ├── q_learning_simple_basic.yaml
-│   └── ...
+├── configs/                    # Configurations YAML
 ├── src/
-│   ├── agents/                # Algorithmes RL
-│   │   ├── base_agent.py      #   ABC commune
-│   │   ├── q_learning.py      #   Q-Learning tabulaire
-│   │   ├── dqn.py             #   DQN (PyTorch)
-│   │   └── double_dqn.py      #   Double DQN
-│   ├── environments/          # Wrappers et reward shaping
-│   │   ├── wrappers.py        #   SimpleObs (4f), EnrichedObs (7f)
-│   │   └── rewards.py         #   Basic, Distance, Centered
-│   ├── game/                  # Moteur multi-oiseaux + rendu Pygame
-│   │   ├── engine.py          #   Physique Flappy Bird (N oiseaux)
-│   │   ├── renderer.py        #   Rendu jeu + panneau + tooltips
-│   │   ├── race.py            #   RaceManager (orchestration)
-│   │   └── ui.py              #   Dialog d'ajout d'oiseau
-│   ├── training/              # Pipeline d'entraînement
-│   │   ├── trainer.py         #   Boucle d'entraînement
-│   │   ├── config.py          #   Chargement YAML
-│   │   └── logger.py          #   Métriques
-│   └── visualization/         # Visualisation agent unique
-│       ├── renderer.py
-│       └── overlay.py
-└── tests/                     # 175 tests (pytest)
-    ├── test_agents/
-    ├── test_environments/
-    ├── test_game/
-    └── test_training/
+│   ├── agents/                 # Q-Learning, DQN, Double DQN
+│   ├── environments/           # Wrappers + reward shaping
+│   ├── game/                   # Moteur multi-oiseaux + UI Pygame
+│   │   ├── engine.py           #   Physique (N oiseaux, tuyaux partages)
+│   │   ├── renderer.py         #   Rendu + panels + tooltips
+│   │   ├── race.py             #   Orchestration agents/oiseaux
+│   │   ├── strategies.py       #   Strategies d'exploration
+│   │   └── ui.py               #   Dialog d'ajout configurable
+│   ├── training/               # Pipeline d'entrainement
+│   └── visualization/          # Rendu agent unique
+└── tests/                      # 175 tests
 ```
 
 ## Tests
@@ -127,10 +117,8 @@ python -m pytest tests/ -v
 
 ## Comment ca marche
 
-1. **Moteur de jeu** (`src/game/engine.py`) : Simule N oiseaux en parallèle dans un environnement Flappy Bird avec les memes tuyaux. Physique identique à `flappy-bird-gymnasium`.
-
-2. **Agents RL** : Chaque oiseau a son propre agent qui observe `[position_y, vitesse, distance_tuyau, centre_gap]` et choisit entre "flap" et "ne rien faire" via epsilon-greedy.
-
-3. **Entraînement live** : Les agents apprennent en temps réel pendant la course. L'epsilon decay diminue l'exploration au fil des rounds.
-
-4. **Reward shaping** : Différentes fonctions de reward guident l'apprentissage differemment --- comparez les pour voir laquelle produit les meilleurs résultats.
+1. **Moteur** : Simule N oiseaux en parallele avec physique identique a `flappy-bird-gymnasium`
+2. **Observation** : `[position_y, vitesse, distance_tuyau, centre_gap]` — 4 valeurs normalisees
+3. **Decision** : Epsilon-greedy — explore avec la strategie choisie ou exploite le reseau entraine
+4. **Apprentissage** : Les agents apprennent en temps reel pendant la course
+5. **Reward shaping** : Differentes fonctions guident l'apprentissage — Smart + Guided donne les meilleurs resultats
