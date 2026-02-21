@@ -64,6 +64,7 @@ class ReinforceAgent(BaseAgent):
         epsilon_start: float = 1.0,
         epsilon_end: float = 0.01,
         epsilon_decay: float = 0.99995,
+        baseline_ema_alpha: float = 0.1,
     ):
         super().__init__(state_dim, action_dim)
 
@@ -75,6 +76,7 @@ class ReinforceAgent(BaseAgent):
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay
         self.lr = lr
+        self.baseline_ema_alpha = baseline_ema_alpha
 
         # Device selection
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -91,6 +93,10 @@ class ReinforceAgent(BaseAgent):
 
         # Step counter (for compatibility with training loop info)
         self._step_count = 0
+
+        # Exponential moving average baseline across episodes
+        self._baseline_ema: float = 0.0
+        self._baseline_initialized: bool = False
 
         # Cache the last log_prob from select_action so train_step can use it
         self._last_log_prob: torch.Tensor | None = None
@@ -219,12 +225,26 @@ class ReinforceAgent(BaseAgent):
 
             returns_t = torch.tensor(returns, dtype=torch.float32, device=self.device)
 
-            # Baseline: subtract mean return for variance reduction
-            if len(returns_t) > 1:
-                baseline = returns_t.mean()
-                advantages = returns_t - baseline
+            # Exponential moving average baseline across episodes.
+            # Combines within-episode normalization (mean subtraction) with
+            # a cross-episode EMA that stabilizes training for short episodes
+            # (~50-200 frames) where per-episode mean can be noisy.
+            episode_mean = returns_t.mean().item()
+            if not self._baseline_initialized:
+                self._baseline_ema = episode_mean
+                self._baseline_initialized = True
             else:
-                advantages = returns_t
+                self._baseline_ema = (
+                    self.baseline_ema_alpha * episode_mean
+                    + (1.0 - self.baseline_ema_alpha) * self._baseline_ema
+                )
+
+            advantages = returns_t - self._baseline_ema
+            # Normalize advantages for stability
+            if len(advantages) > 1:
+                adv_std = advantages.std()
+                if adv_std > 1e-8:
+                    advantages = advantages / (adv_std + 1e-8)
 
             # Compute policy gradient loss: -sum(log_prob * advantage)
             log_probs_t = torch.stack(self._log_probs)
@@ -274,6 +294,9 @@ class ReinforceAgent(BaseAgent):
             "epsilon_decay": float(self.epsilon_decay),
             "lr": float(self.lr),
             "step_count": int(self._step_count),
+            "baseline_ema": float(self._baseline_ema),
+            "baseline_initialized": bool(self._baseline_initialized),
+            "baseline_ema_alpha": float(self.baseline_ema_alpha),
         }
         with open(path / "params.json", "w") as f:
             json.dump(params, f, indent=2)
@@ -301,6 +324,9 @@ class ReinforceAgent(BaseAgent):
         self.gamma = params["gamma"]
         self.lr = params["lr"]
         self._step_count = params["step_count"]
+        self._baseline_ema = params.get("baseline_ema", 0.0)
+        self._baseline_initialized = params.get("baseline_initialized", False)
+        self.baseline_ema_alpha = params.get("baseline_ema_alpha", 0.1)
 
     def get_info(self) -> dict:
         """Return current agent info for logging.

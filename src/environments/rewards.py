@@ -137,17 +137,21 @@ class CenteredReward(RewardFunction):
 
 
 class SmartReward(RewardFunction):
-    """Combined reward: clipped centering + progress + survival.
+    """Combined reward: scaled centering + progress + survival.
 
-    Simplified reward signal (3 components):
-      - Centering: clipped linear bonus, max 1.0 when centered, 0.0 when
-        >= 0.15 away from gap center (no reward leakage outside gap)
-      - Progress: bonus for being close to next pipe (0 to 0.2)
+    Reward signal (3 components, scaled so pipe bonus dominates):
+      - Centering: clipped linear bonus, max 0.3 when centered, 0.0 when
+        >= 0.15 away from gap center (no reward leakage outside gap).
+        Coefficient reduced from 1.0 to 0.3 so cumulative shaping between
+        pipes does not drown out the discrete pipe bonus (old ratio was
+        3:1 shaping:pipe; new ratio is ~0.8:1).
+      - Progress: small bonus for being close to next pipe (0 to 0.1).
+        Reduced from 0.2 to 0.1 for the same scaling reason.
       - Survival: small constant bonus (+0.1)
-      - Death: configurable penalty (default -5.0)
+      - Death: configurable penalty (default -5.0, overridden by BirdEntry)
 
     Direction reward was removed (caused oscillation near gap center).
-    Centering changed from exponential to clipped linear for tighter signal.
+    Centering uses clipped linear for tighter signal.
 
     Supports both 5D-relative (custom engine) and 12-feature (gymnasium) obs.
     """
@@ -176,10 +180,11 @@ class SmartReward(RewardFunction):
             distance = abs(player_y - gap_center)
             dist_next = float(obs[3])
 
-        # Clipped linear centering: max 1.0 when centered, 0.0 when >= 0.15 away
-        centering = max(0.0, 1.0 - distance / 0.15)
+        # Clipped linear centering: max 0.3 when centered, 0.0 when >= 0.15 away
+        # (scaled down from 1.0 so pipe bonus remains the dominant signal)
+        centering = max(0.0, 1.0 - distance / 0.15) * 0.3
 
-        # Small progress bonus
-        progress = (1.0 - max(0.0, dist_next)) * 0.2
+        # Small progress bonus (scaled down from 0.2)
+        progress = (1.0 - max(0.0, dist_next)) * 0.1
 
         return 0.1 + centering + progress
