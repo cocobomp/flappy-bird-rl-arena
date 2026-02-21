@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.agents.dqn import DQNAgent
+from src.agents.dqn import DQNAgent, _init_weights
 
 
 class DuelingQNetwork(nn.Module):
@@ -64,6 +64,8 @@ class DuelingQNetwork(nn.Module):
             nn.Linear(hidden_dims[1], action_dim),
         )
 
+        self.apply(_init_weights)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Compute Q-values using dueling decomposition.
 
@@ -101,6 +103,12 @@ class DuelingDQNAgent(DQNAgent):
         tau: float = 0.005,
         train_every: int = 4,
         train_intensity: int = 2,
+        use_per: bool = False,
+        per_alpha: float = 0.6,
+        per_beta_start: float = 0.4,
+        per_beta_frames: int = 100000,
+        lr_schedule: str = None,
+        lr_schedule_steps: int = 100000,
     ):
         # Let DQNAgent.__init__ set up everything (including default QNetwork)
         super().__init__(
@@ -117,6 +125,12 @@ class DuelingDQNAgent(DQNAgent):
             tau=tau,
             train_every=train_every,
             train_intensity=train_intensity,
+            use_per=use_per,
+            per_alpha=per_alpha,
+            per_beta_start=per_beta_start,
+            per_beta_frames=per_beta_frames,
+            lr_schedule=lr_schedule,
+            lr_schedule_steps=lr_schedule_steps,
         )
 
         if hidden_dims is None:

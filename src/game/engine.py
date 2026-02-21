@@ -41,11 +41,13 @@ class Bird:
         self.alive = True
         self.score = 0
         self.steps_alive = 0
+        self.steps_since_flap = 0
         self.trail = []
 
     def flap(self):
         if self.alive and self.y > -2 * PLAYER_HEIGHT:
             self.vel_y = float(PLAYER_FLAP_ACC)
+            self.steps_since_flap = 0
 
     def update(self, ground_y: int):
         if not self.alive:
@@ -57,6 +59,7 @@ class Bird:
         self.y += min(self.vel_y, ground_y - self.y - PLAYER_HEIGHT)
         self.y = max(self.y, 0)
         self.steps_alive += 1
+        self.steps_since_flap += 1
         if self.alive:
             self.trail.append(self.y)
             if len(self.trail) > 50:
@@ -219,14 +222,17 @@ class FlappyBirdEngine:
                 pipe["scored"] = True
 
     def get_observation(self, bird: Bird) -> np.ndarray:
-        """Get observation for a bird: 5 relative features covering the two nearest pipes.
+        """Get observation for a bird: 8 relative features covering the two nearest pipes.
 
         Features (all normalized):
-            delta_y1   – (bird.y - gap_center1) / SCREEN_HEIGHT  (positive = below gap)
-            velocity   – bird.vel_y / PLAYER_MAX_VEL_Y
-            dist_pipe1 – (pipe1_x - bird.x) / SCREEN_WIDTH
-            delta_y2   – (bird.y - gap_center2) / SCREEN_HEIGHT  (positive = below gap)
-            dist_pipe2 – (pipe2_x - bird.x) / SCREEN_WIDTH
+            [0] delta_y1   – (bird.y - gap_center1) / SCREEN_HEIGHT  (positive = below gap)
+            [1] velocity   – bird.vel_y / PLAYER_MAX_VEL_Y
+            [2] dist_pipe1 – (pipe1_x - bird.x) / SCREEN_WIDTH
+            [3] delta_y2   – (bird.y - gap_center2) / SCREEN_HEIGHT  (positive = below gap)
+            [4] dist_pipe2 – (pipe2_x - bird.x) / SCREEN_WIDTH
+            [5] gap_position – -1 if above gap, 0 if inside gap, +1 if below gap
+            [6] proximity_danger – 1.0 - dist_pipe1 when close (< 0.2), else 0
+            [7] vertical_speed_direction – sign(vel) * vel^2, amplified velocity signal
 
         Where gap_center = gap_y + PIPE_GAP / 2.
         """
@@ -259,8 +265,26 @@ class FlappyBirdEngine:
         dist_pipe2 = (second_pipe["x"] - bird.x) / SCREEN_WIDTH
         delta_y2 = player_y - gap_center2
 
+        # Feature 6: gap_position — discrete signal for gap alignment
+        half_gap = PIPE_GAP / 2 / SCREEN_HEIGHT  # ~0.098
+        if delta_y1 < -half_gap:
+            gap_position = -1.0  # above gap
+        elif delta_y1 > half_gap:
+            gap_position = 1.0   # below gap
+        else:
+            gap_position = 0.0   # inside gap
+
+        # Feature 7: proximity_danger — urgency signal near pipes
+        proximity_danger = max(0.0, 1.0 - dist_pipe1) if dist_pipe1 < 0.2 else 0.0
+
+        # Feature 8: vertical_speed_direction — amplified velocity
+        vel_raw = bird.vel_y / PLAYER_MAX_VEL_Y
+        vertical_speed_direction = float(np.sign(vel_raw)) * (vel_raw ** 2)
+
         return np.array([delta_y1, velocity, dist_pipe1,
-                         delta_y2, dist_pipe2], dtype=np.float32)
+                         delta_y2, dist_pipe2,
+                         gap_position, proximity_danger,
+                         vertical_speed_direction], dtype=np.float32)
 
     def get_alive_count(self) -> int:
         return sum(1 for b in self.birds if b.alive)

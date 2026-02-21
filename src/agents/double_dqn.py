@@ -25,7 +25,8 @@ class DoubleDQNAgent(DQNAgent):
         rewards: np.ndarray,
         next_states: np.ndarray,
         dones: np.ndarray,
-    ) -> Tuple[torch.Tensor, float]:
+        weights: np.ndarray = None,
+    ) -> Tuple[torch.Tensor, float, np.ndarray]:
         """Compute Double DQN loss.
 
         Key difference from DQN:
@@ -34,9 +35,10 @@ class DoubleDQNAgent(DQNAgent):
 
         Args:
             states, actions, rewards, next_states, dones: Batch arrays.
+            weights: Optional importance sampling weights for PER.
 
         Returns:
-            Tuple of (loss tensor, mean Q-value float).
+            Tuple of (loss tensor, mean Q-value float, per-sample TD errors).
         """
         states_t = torch.FloatTensor(states).to(self.device)
         actions_t = torch.LongTensor(actions).to(self.device)
@@ -56,7 +58,18 @@ class DoubleDQNAgent(DQNAgent):
             next_q = self.target_net(next_states_t).gather(1, best_actions).squeeze(1)
             target = rewards_t + self.gamma * next_q * (1.0 - dones_t)
 
-        loss = nn.functional.mse_loss(q_taken, target)
+        # Per-sample TD errors (for PER priority updates)
+        td_errors = (q_taken - target).detach().abs().cpu().numpy()
+
+        if weights is not None:
+            weights_t = torch.FloatTensor(weights).to(self.device)
+            element_loss = nn.functional.mse_loss(
+                q_taken, target, reduction="none"
+            )
+            loss = (weights_t * element_loss).mean()
+        else:
+            loss = nn.functional.mse_loss(q_taken, target)
+
         q_mean = q_values.detach().mean().item()
 
-        return loss, q_mean
+        return loss, q_mean, td_errors

@@ -8,11 +8,15 @@ from src.agents import (
     RandomForestAgent, GradientBoostAgent, KNNAgent, SVMAgent,
 )
 from src.environments.rewards import (
-    BasicReward, DistanceReward, CenteredReward, SmartReward, RewardFunction,
+    BasicReward, DistanceReward, CenteredReward, SmartReward,
+    CurriculumReward, RewardFunction,
 )
 from src.game.engine import FlappyBirdEngine, Bird, SCREEN_WIDTH, GROUND_Y, PIPE_GAP
 from src.game.ui import BIRD_COLORS, ALGO_DISPLAY, REWARD_DISPLAY, STRATEGY_DISPLAY
-from src.game.strategies import STRATEGY_MAP, STRATEGY_OPTIONS, ExplorationStrategy
+from src.game.strategies import (
+    STRATEGY_MAP, STRATEGY_OPTIONS, ExplorationStrategy, BoltzmannStrategy,
+    HeuristicStrategy,
+)
 
 AGENT_MAP = {
     "q_learning": QLearningAgent,
@@ -32,9 +36,10 @@ REWARD_MAP = {
     "distance": DistanceReward,
     "centered": CenteredReward,
     "smart": SmartReward,
+    "curriculum": CurriculumReward,
 }
 
-STATE_DIM = 5
+STATE_DIM = 8
 ACTION_DIM = 2
 
 
@@ -46,10 +51,10 @@ class BirdEntry:
     strategy_name: str
     color: tuple[int, int, int]
     state_dim: int = STATE_DIM
-    epsilon_start: float = 1.0
-    lr: float = 3e-4
+    epsilon_start: float = 0.5
+    lr: float = 5e-4
     epsilon_decay: float = 1.0
-    episode_epsilon_decay: float = 0.98
+    episode_epsilon_decay: float = 0.95
     death_penalty: float = 20.0
     pipe_bonus: float = 15.0
     alive_reward: float = 0.02
@@ -88,40 +93,31 @@ class BirdEntry:
                 **common, lr=self.lr, gamma=0.95, n_bins=10,
             )
         elif self.algo == "reinforce":
-            # Larger network [128,64] for more capacity; EMA baseline
-            # with alpha=0.1 smooths across short episodes (50-200 frames)
             self.agent = agent_cls(
                 **common, lr=self.lr, gamma=0.95, hidden_dims=[128, 64],
-                baseline_ema_alpha=0.1,
+                baseline_ema_alpha=0.1, entropy_coef=0.02,
             )
         elif self.algo == "ppo":
-            # rollout_size=64: better for short episodes (50-200 frames),
-            #   ensures more regular updates for longer-surviving birds
-            # n_epochs=4: good data reuse for small rollouts
-            # clip_eps=0.2: standard, works well
-            # entropy_coef=0.02: slightly higher for better exploration
-            #   in short episodes where the policy can collapse quickly
-            # gae_lambda=0.95: standard, appropriate for gamma=0.95
             self.agent = agent_cls(
                 **common, lr=self.lr, gamma=0.95, hidden_dims=[128, 64],
-                rollout_size=64, n_epochs=4, clip_eps=0.2,
-                entropy_coef=0.02, gae_lambda=0.95,
+                rollout_size=64, n_epochs=6, clip_eps=0.2,
+                entropy_coef=0.03, gae_lambda=0.95,
             )
         else:
-            # DQN, Double DQN, Dueling DQN
-            # Optimized via hyperparameter sweep:
-            # hidden_dims=[128,64]: more capacity for better generalization
-            # train_intensity=4: more gradient steps per training trigger
-            # tau=0.005: stable target network updates (tau=0.01 hurts)
-            # batch_size=64: good balance of gradient noise/stability
+            # DQN, Double DQN, Dueling DQN — with PER + LR scheduling
             self.agent = agent_cls(
                 **common, lr=self.lr, gamma=0.95,
                 hidden_dims=[128, 64],
-                buffer_size=10000, batch_size=64, tau=0.005,
-                train_every=1, train_intensity=4,
+                buffer_size=15000, batch_size=64, tau=0.005,
+                train_every=1, train_intensity=8,
+                use_per=True, per_alpha=0.6,
+                per_beta_start=0.4, per_beta_frames=50000,
+                lr_schedule="cosine", lr_schedule_steps=80000,
             )
         if self.reward == "smart":
             self.reward_fn = SmartReward(death_penalty=self.death_penalty)
+        elif self.reward == "curriculum":
+            self.reward_fn = CurriculumReward(death_penalty=self.death_penalty)
         else:
             self.reward_fn = REWARD_MAP[self.reward]()
         self._create_strategy()
@@ -163,11 +159,12 @@ class RaceManager:
         self.round_scores: list[int] = []
         self.ghost_trail: list[float] = []
         self.best_ever_score: int = 0
+        self._warmstarted = False
 
     def add_bird(self, algo: str, reward: str, strategy: str = "guided",
-                 epsilon_start: float = 1.0, lr: float = 3e-4,
+                 epsilon_start: float = 0.5, lr: float = 5e-4,
                  epsilon_decay: float = 1.0,
-                 episode_epsilon_decay: float = 0.98,
+                 episode_epsilon_decay: float = 0.95,
                  death_penalty: float = 20.0,
                  pipe_bonus: float = 15.0, alive_reward: float = 0.02,
                  flap_threshold: float = 0.04, strategy_noise: float = 0.10,
@@ -233,7 +230,51 @@ class RaceManager:
             entry.generation += 1
             entry.parent_color = best.color
 
+    def _share_death_experience(self, dead_entry: BirdEntry, action: int, obs: np.ndarray) -> None:
+        """Share a dying bird's experience with all other alive DQN-family agents."""
+        death_reward = -10.0
+        for entry in self.entries:
+            if entry is dead_entry or not entry.bird.alive:
+                continue
+            if hasattr(entry.agent, 'replay_buffer'):
+                entry.agent.train_step(dead_entry.prev_obs, action, death_reward, obs, True)
+
+    def _warmstart_buffers(self) -> None:
+        """Pre-fill DQN replay buffers with heuristic expert demonstrations."""
+        heuristic = HeuristicStrategy(noise=0.0, threshold=0.04)
+        for entry in self.entries:
+            if not hasattr(entry.agent, 'replay_buffer'):
+                continue
+            for _ in range(200):
+                obs = np.zeros(entry.state_dim, dtype=np.float32)
+                obs[0] = np.random.uniform(-0.3, 0.3)    # delta_y1
+                obs[1] = np.random.uniform(-1.0, 1.0)    # velocity
+                obs[2] = np.random.uniform(0.0, 1.0)     # dist_pipe1
+                if entry.state_dim > 3:
+                    obs[3] = np.random.uniform(-0.3, 0.3) # delta_y2
+                if entry.state_dim > 4:
+                    obs[4] = np.random.uniform(0.0, 1.0)  # dist_pipe2
+                if entry.state_dim > 5:
+                    # gap_position: -1, 0, or +1
+                    obs[5] = float(np.random.choice([-1.0, 0.0, 1.0]))
+                if entry.state_dim > 6:
+                    obs[6] = max(0.0, 1.0 - obs[2]) if obs[2] < 0.2 else 0.0
+                if entry.state_dim > 7:
+                    obs[7] = np.sign(obs[1]) * obs[1] ** 2
+
+                action = heuristic.explore(obs)
+                next_obs = obs.copy()
+                if action == 1:
+                    next_obs[1] = max(-1.0, obs[1] - 0.3)
+                else:
+                    next_obs[1] = min(1.0, obs[1] + 0.05)
+                next_obs[0] += next_obs[1] * 0.05
+                entry.agent.replay_buffer.push(obs, action, 0.1, next_obs, False)
+
     def reset_round(self):
+        if not self._warmstarted:
+            self._warmstart_buffers()
+            self._warmstarted = True
         if self.evolution_enabled:
             self.evolve()
         if self.entries:
@@ -244,14 +285,22 @@ class RaceManager:
             if best.bird.score > self.best_ever_score:
                 self.best_ever_score = best.bird.score
                 self.ghost_trail = list(best.bird.trail)
-        # Per-episode epsilon decay: decay once per round (not per frame).
-        # This gives the agent more time under guided exploration early on,
-        # then smoothly transitions to exploitation as training progresses.
+        # Performance-based epsilon decay: faster decay when scoring,
+        # slower when struggling. This lets good agents exploit sooner
+        # while keeping bad agents exploring longer.
         for entry in self.entries:
-            entry.agent.epsilon = max(
-                getattr(entry.agent, 'epsilon_end', 0.01),
-                entry.agent.epsilon * entry.episode_epsilon_decay,
-            )
+            epsilon_end = getattr(entry.agent, 'epsilon_end', 0.01)
+            if entry.bird.score > 0:
+                entry.agent.epsilon *= 0.90   # scored: decay faster
+            else:
+                entry.agent.epsilon *= 0.98   # scored 0: decay slower
+            entry.agent.epsilon = max(epsilon_end, entry.agent.epsilon)
+            # Advance curriculum reward if applicable
+            if isinstance(entry.reward_fn, CurriculumReward):
+                entry.reward_fn.advance_episode()
+            # Notify strategy of episode end (for adaptive noise/temperature)
+            if hasattr(entry.strategy, 'on_episode_end'):
+                entry.strategy.on_episode_end(entry.bird.score)
         self.engine.reset()
         for entry in self.entries:
             entry.prev_obs = self.engine.get_observation(entry.bird)
@@ -282,24 +331,28 @@ class RaceManager:
                 elif hasattr(entry.agent, 'q_table') and hasattr(entry.agent, '_discretize'):
                     key = entry.agent._discretize(obs)
                     entry.last_q_values = entry.agent.q_table[key].copy()
+                # Feed Q-values to Boltzmann strategy if available
+                if isinstance(entry.strategy, BoltzmannStrategy) and entry.last_q_values is not None:
+                    entry.strategy.set_q_values(entry.last_q_values)
                 # Exploration with strategy vs exploitation with learned policy
                 exploring = np.random.random() < entry.agent.epsilon
                 if exploring:
                     action = entry.strategy.explore(obs)
                 else:
                     action = entry.agent.select_action(obs, training=False)
-                    # Safety filter: override obviously dangerous agent actions.
-                    # If agent says "flap" but bird is well above the gap,
-                    # or says "no flap" but bird is falling far below the gap,
-                    # override with the guided strategy's recommendation.
+                    # Safety filter: enforce basic flight rules.
+                    # Rule 1: NEVER flap if above the top of the next gap.
+                    #   Half gap = 50px / 512 = 0.098 normalized.
+                    #   If delta_y < -0.08 the bird is above the gap — no flap.
+                    # Rule 2: MUST flap if far below the gap and falling.
                     if entry.safety_filter:
                         delta_y = obs[0]   # positive = below gap
                         velocity = obs[1]  # negative = going up
-                        # Bird well above gap and rising -> flap is dangerous
-                        if action == 1 and delta_y < -0.10 and velocity < 0:
+                        # Bird above the top of the gap -> NEVER flap
+                        if action == 1 and delta_y < -0.08:
                             action = 0
-                        # Bird far below gap and falling fast -> must flap
-                        elif action == 0 and delta_y > 0.12 and velocity > 0.3:
+                        # Bird far below gap and falling -> MUST flap
+                        elif action == 0 and delta_y > 0.10 and velocity > 0.2:
                             action = 1
                 entry.last_exploring = exploring
                 actions[entry.bird.bird_id] = action
@@ -319,12 +372,36 @@ class RaceManager:
                 # Configurable bonuses on top of reward function
                 if not terminated:
                     reward += entry.alive_reward
+                    # Boundary penalty: discourage extreme vertical positions
+                    delta_y = obs[0] if obs is not None else 0
+                    if abs(delta_y) > 0.3:
+                        reward -= 0.5
                 pipes_passed = entry.bird.score - prev_scores.get(bid, 0)
                 if pipes_passed > 0:
-                    reward += entry.pipe_bonus * pipes_passed
+                    # Centered pipe-passing bonus: reward birds that pass centered
+                    prev_delta_y = entry.prev_obs[0] if entry.prev_obs is not None else 0
+                    bonus_scale = max(0.2, 1.0 - abs(prev_delta_y) / 0.1)
+                    reward += entry.pipe_bonus * pipes_passed * bonus_scale
                     entry.total_pipes += pipes_passed
                 action = actions.get(bid, 0)
+                # Penalize flapping above the gap — teach this critical rule
+                prev_delta_y = entry.prev_obs[0] if entry.prev_obs is not None else 0
+                if action == 1 and prev_delta_y < -0.08:
+                    reward -= 2.0
+                # Adaptive training intensity for DQN-family agents
+                original_intensity = None
+                if hasattr(entry.agent, 'train_intensity'):
+                    original_intensity = entry.agent.train_intensity
+                    if entry.best_score <= 2:
+                        entry.agent.train_intensity = original_intensity * 2
+                    elif entry.best_score > 10:
+                        entry.agent.train_intensity = max(1, original_intensity // 2)
                 entry.agent.train_step(entry.prev_obs, action, reward, obs, terminated)
+                if original_intensity is not None:
+                    entry.agent.train_intensity = original_intensity
+                # Share death experience with other alive DQN-family agents
+                if terminated:
+                    self._share_death_experience(entry, action, obs)
 
         for entry in self.entries:
             if entry.bird.score > entry.best_score:

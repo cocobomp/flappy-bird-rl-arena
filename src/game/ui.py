@@ -14,8 +14,8 @@ ALGO_OPTIONS = [
     "q_learning", "dqn", "double_dqn", "dueling_dqn", "reinforce", "ppo",
     "random_forest", "gradient_boost", "knn", "svm",
 ]
-REWARD_OPTIONS = ["basic", "distance", "centered", "smart"]
-STRATEGY_OPTIONS = ["random", "gravity", "heuristic", "guided"]
+REWARD_OPTIONS = ["basic", "distance", "centered", "smart", "curriculum"]
+STRATEGY_OPTIONS = ["random", "gravity", "heuristic", "guided", "boltzmann"]
 
 ALGO_DISPLAY = {
     "q_learning": "QL", "dqn": "DQN", "double_dqn": "DDQN",
@@ -24,11 +24,12 @@ ALGO_DISPLAY = {
     "knn": "KNN", "svm": "SVM",
 }
 REWARD_DISPLAY = {
-    "basic": "Basic", "distance": "Dist", "centered": "Center", "smart": "Smart",
+    "basic": "Basic", "distance": "Dist", "centered": "Center",
+    "smart": "Smart", "curriculum": "Curric.",
 }
 STRATEGY_DISPLAY = {
     "random": "Random", "gravity": "Gravity",
-    "heuristic": "Heurist.", "guided": "Guided",
+    "heuristic": "Heurist.", "guided": "Guided", "boltzmann": "Boltzm.",
 }
 
 STRATEGY_EXPLAIN = {
@@ -36,6 +37,7 @@ STRATEGY_EXPLAIN = {
     "gravity": "12% de flap — compense gravite faible",
     "heuristic": "PD-controller: flap selon position+velocite",
     "guided": "Gravity loin + Heuristique pres (recommande!)",
+    "boltzmann": "Selection par temperature sur Q-values (DQN)",
 }
 
 

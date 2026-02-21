@@ -190,8 +190,8 @@ class TestDoubleDQNVsDQN:
         next_states = np.random.randn(8, 4).astype(np.float32)
         dones = np.zeros(8, dtype=np.float32)
 
-        dqn_loss, _ = dqn._compute_loss(states, actions, rewards, next_states, dones)
-        ddqn_loss, _ = ddqn._compute_loss(states, actions, rewards, next_states, dones)
+        dqn_loss, _, _ = dqn._compute_loss(states, actions, rewards, next_states, dones)
+        ddqn_loss, _, _ = ddqn._compute_loss(states, actions, rewards, next_states, dones)
 
         # Losses should (very likely) differ since the methods differ
         # We can't guarantee they differ with all seeds, but with the

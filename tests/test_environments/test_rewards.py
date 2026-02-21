@@ -8,6 +8,8 @@ from src.environments.rewards import (
     BasicReward,
     DistanceReward,
     CenteredReward,
+    SmartReward,
+    CurriculumReward,
 )
 
 
@@ -200,3 +202,132 @@ class TestCenteredReward:
 
     def test_is_reward_function_subclass(self):
         assert isinstance(self.reward_fn, RewardFunction)
+
+
+# ===================================================================
+# SmartReward
+# ===================================================================
+
+def _make_5d_obs(delta_y=0.0, velocity=0.0, dist_pipe1=0.5,
+                 delta_y2=0.0, dist_pipe2=0.8) -> np.ndarray:
+    """Create an 8D custom engine observation (name kept for compatibility)."""
+    gap_position = -1.0 if delta_y < -0.098 else (1.0 if delta_y > 0.098 else 0.0)
+    proximity_danger = max(0.0, 1.0 - dist_pipe1) if dist_pipe1 < 0.2 else 0.0
+    vertical_speed_dir = float(np.sign(velocity)) * (velocity ** 2)
+    return np.array([delta_y, velocity, dist_pipe1, delta_y2, dist_pipe2,
+                     gap_position, proximity_danger, vertical_speed_dir],
+                    dtype=np.float32)
+
+
+class TestSmartReward:
+    """Tests for SmartReward with velocity penalty."""
+
+    def setup_method(self):
+        self.reward_fn = SmartReward(death_penalty=5.0)
+
+    def test_death_penalty(self):
+        obs = _make_obs()
+        result = self.reward_fn.compute(obs, 0.0, terminated=True, truncated=False)
+        assert result == pytest.approx(-5.0)
+
+    def test_custom_death_penalty(self):
+        fn = SmartReward(death_penalty=20.0)
+        obs = _make_obs()
+        assert fn.compute(obs, 0.0, True, False) == pytest.approx(-20.0)
+
+    def test_alive_reward_positive_when_centered(self):
+        obs = _make_obs(player_y=0.5)  # gap_center = 0.5
+        result = self.reward_fn.compute(obs, 0.0, False, False)
+        assert result > 0.0
+
+    def test_centering_bonus_higher_when_centered(self):
+        obs_center = _make_obs(player_y=0.5)
+        obs_off = _make_obs(player_y=0.9)
+        r_center = self.reward_fn.compute(obs_center, 0.0, False, False)
+        r_off = self.reward_fn.compute(obs_off, 0.0, False, False)
+        assert r_center > r_off
+
+    def test_velocity_penalty_near_pipe(self):
+        # Near pipe (dist < 0.3), high velocity should be penalized
+        obs_still = _make_5d_obs(delta_y=0.0, velocity=0.0, dist_pipe1=0.1)
+        obs_fast = _make_5d_obs(delta_y=0.0, velocity=0.8, dist_pipe1=0.1)
+        r_still = self.reward_fn.compute(obs_still, 0.0, False, False)
+        r_fast = self.reward_fn.compute(obs_fast, 0.0, False, False)
+        assert r_still > r_fast
+
+    def test_no_velocity_penalty_far_from_pipe(self):
+        # Far from pipe (dist >= 0.3), velocity should NOT be penalized
+        obs_still = _make_5d_obs(delta_y=0.0, velocity=0.0, dist_pipe1=0.5)
+        obs_fast = _make_5d_obs(delta_y=0.0, velocity=0.8, dist_pipe1=0.5)
+        r_still = self.reward_fn.compute(obs_still, 0.0, False, False)
+        r_fast = self.reward_fn.compute(obs_fast, 0.0, False, False)
+        assert r_still == pytest.approx(r_fast)
+
+    def test_is_reward_function_subclass(self):
+        assert isinstance(self.reward_fn, RewardFunction)
+
+    def test_5d_obs_support(self):
+        obs = _make_5d_obs()
+        result = self.reward_fn.compute(obs, 0.0, False, False)
+        assert isinstance(result, float)
+
+
+# ===================================================================
+# CurriculumReward
+# ===================================================================
+
+class TestCurriculumReward:
+    """Tests for CurriculumReward: adaptive difficulty over episodes."""
+
+    def setup_method(self):
+        self.reward_fn = CurriculumReward(death_penalty=5.0, warmup=50)
+
+    def test_death_penalty(self):
+        obs = _make_obs()
+        result = self.reward_fn.compute(obs, 0.0, True, False)
+        assert result == pytest.approx(-5.0)
+
+    def test_initial_progress_is_zero(self):
+        assert self.reward_fn.progress == pytest.approx(0.0)
+
+    def test_progress_increases_with_episodes(self):
+        for _ in range(50):
+            self.reward_fn.advance_episode()
+        assert self.reward_fn.progress > 0.0
+        assert self.reward_fn.progress < 1.0
+
+    def test_progress_caps_at_one(self):
+        for _ in range(200):
+            self.reward_fn.advance_episode()
+        assert self.reward_fn.progress == pytest.approx(1.0)
+
+    def test_early_survival_bonus_is_generous(self):
+        obs = _make_5d_obs(delta_y=0.5, velocity=0.0, dist_pipe1=0.5)
+        result_early = self.reward_fn.compute(obs, 0.0, False, False)
+        for _ in range(200):
+            self.reward_fn.advance_episode()
+        result_late = self.reward_fn.compute(obs, 0.0, False, False)
+        assert result_early > result_late
+
+    def test_centering_becomes_stricter(self):
+        obs = _make_5d_obs(delta_y=0.15, velocity=0.0, dist_pipe1=0.5)
+        result_early = self.reward_fn.compute(obs, 0.0, False, False)
+
+        late_fn = CurriculumReward(death_penalty=5.0, warmup=50)
+        for _ in range(200):
+            late_fn.advance_episode()
+        result_late = late_fn.compute(obs, 0.0, False, False)
+        assert result_early > result_late
+
+    def test_is_reward_function_subclass(self):
+        assert isinstance(self.reward_fn, RewardFunction)
+
+    def test_5d_obs_support(self):
+        obs = _make_5d_obs()
+        result = self.reward_fn.compute(obs, 0.0, False, False)
+        assert isinstance(result, float)
+
+    def test_12d_obs_support(self):
+        obs = _make_obs()
+        result = self.reward_fn.compute(obs, 0.0, False, False)
+        assert isinstance(result, float)

@@ -16,6 +16,7 @@ class PolicyNetwork(nn.Module):
     """Feedforward policy network that outputs action probabilities.
 
     Architecture: input -> [hidden_i -> ReLU]* -> output -> Softmax.
+    Uses orthogonal initialization for improved training stability.
     """
 
     def __init__(
@@ -38,6 +39,17 @@ class PolicyNetwork(nn.Module):
         layers.append(nn.Softmax(dim=-1))
 
         self.network = nn.Sequential(*layers)
+        self._init_weights()
+
+    def _init_weights(self):
+        """Apply orthogonal initialization to all linear layers."""
+        for module in self.network:
+            if isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight, gain=np.sqrt(2))
+                nn.init.constant_(module.bias, 0.0)
+        # Use small gain for the output (policy) layer to start near-uniform
+        output_layer = self.network[-2]  # Linear before Softmax
+        nn.init.orthogonal_(output_layer.weight, gain=0.01)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.network(x)
@@ -65,6 +77,7 @@ class ReinforceAgent(BaseAgent):
         epsilon_end: float = 0.01,
         epsilon_decay: float = 0.99995,
         baseline_ema_alpha: float = 0.1,
+        entropy_coef: float = 0.01,
     ):
         super().__init__(state_dim, action_dim)
 
@@ -77,6 +90,7 @@ class ReinforceAgent(BaseAgent):
         self.epsilon_decay = epsilon_decay
         self.lr = lr
         self.baseline_ema_alpha = baseline_ema_alpha
+        self.entropy_coef = entropy_coef
 
         # Device selection
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -87,8 +101,9 @@ class ReinforceAgent(BaseAgent):
         )
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
-        # Episode buffer: stores (log_prob, reward) for each step in the episode
+        # Episode buffer: stores (log_prob, entropy, reward) for each step
         self._log_probs: List[torch.Tensor] = []
+        self._entropies: List[torch.Tensor] = []
         self._rewards: List[float] = []
 
         # Step counter (for compatibility with training loop info)
@@ -98,8 +113,9 @@ class ReinforceAgent(BaseAgent):
         self._baseline_ema: float = 0.0
         self._baseline_initialized: bool = False
 
-        # Cache the last log_prob from select_action so train_step can use it
+        # Cache the last log_prob/entropy from select_action so train_step can use them
         self._last_log_prob: torch.Tensor | None = None
+        self._last_entropy: torch.Tensor | None = None
 
     def _get_q_values(self, state: np.ndarray) -> np.ndarray:
         """Return action probabilities for display compatibility.
@@ -161,6 +177,7 @@ class ReinforceAgent(BaseAgent):
         # Epsilon-greedy exploration (for training only)
         if training and np.random.random() < self.epsilon:
             self._last_log_prob = None
+            self._last_entropy = None
             return int(np.random.randint(self.action_dim))
 
         state_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
@@ -170,10 +187,12 @@ class ReinforceAgent(BaseAgent):
             dist = torch.distributions.Categorical(probs)
             action = dist.sample()
             self._last_log_prob = dist.log_prob(action)
+            self._last_entropy = dist.entropy()
             return action.item()
         else:
             # Greedy: pick the most probable action
             self._last_log_prob = None
+            self._last_entropy = None
             return probs.argmax(dim=-1).item()
 
     def train_step(self, state, action, reward, next_state, done) -> dict:
@@ -197,21 +216,24 @@ class ReinforceAgent(BaseAgent):
         """
         self._step_count += 1
 
-        # Store the log_prob and reward for this step.
+        # Store the log_prob, entropy, and reward for this step.
         # If epsilon-greedy exploration was used, log_prob may be None.
         # In that case, compute log_prob now for the action that was taken.
         if self._last_log_prob is not None:
             self._log_probs.append(self._last_log_prob)
+            self._entropies.append(self._last_entropy)
         else:
-            # Compute log_prob for the random action that was taken
+            # Compute log_prob and entropy for the random action that was taken
             state_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             probs = self.policy_net(state_t)
             dist = torch.distributions.Categorical(probs)
             action_t = torch.tensor(action, device=self.device)
             self._log_probs.append(dist.log_prob(action_t))
+            self._entropies.append(dist.entropy())
 
         self._rewards.append(reward)
         self._last_log_prob = None
+        self._last_entropy = None
 
         metrics = {}
 
@@ -248,7 +270,12 @@ class ReinforceAgent(BaseAgent):
 
             # Compute policy gradient loss: -sum(log_prob * advantage)
             log_probs_t = torch.stack(self._log_probs)
-            loss = -(log_probs_t * advantages.detach()).sum()
+            entropies_t = torch.stack(self._entropies)
+            policy_loss = -(log_probs_t * advantages.detach()).sum()
+            entropy_bonus = entropies_t.mean()
+
+            # Total loss: policy gradient - entropy regularization
+            loss = policy_loss - self.entropy_coef * entropy_bonus
 
             # Backprop and update
             self.optimizer.zero_grad()
@@ -257,9 +284,11 @@ class ReinforceAgent(BaseAgent):
             self.optimizer.step()
 
             metrics["loss"] = loss.item()
+            metrics["entropy"] = entropy_bonus.item()
 
             # Clear episode buffer
             self._log_probs.clear()
+            self._entropies.clear()
             self._rewards.clear()
 
         # Decay epsilon every step
@@ -297,6 +326,7 @@ class ReinforceAgent(BaseAgent):
             "baseline_ema": float(self._baseline_ema),
             "baseline_initialized": bool(self._baseline_initialized),
             "baseline_ema_alpha": float(self.baseline_ema_alpha),
+            "entropy_coef": float(self.entropy_coef),
         }
         with open(path / "params.json", "w") as f:
             json.dump(params, f, indent=2)
@@ -327,6 +357,7 @@ class ReinforceAgent(BaseAgent):
         self._baseline_ema = params.get("baseline_ema", 0.0)
         self._baseline_initialized = params.get("baseline_initialized", False)
         self.baseline_ema_alpha = params.get("baseline_ema_alpha", 0.1)
+        self.entropy_coef = params.get("entropy_coef", 0.01)
 
     def get_info(self) -> dict:
         """Return current agent info for logging.

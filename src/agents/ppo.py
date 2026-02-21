@@ -19,6 +19,8 @@ class ActorCriticNetwork(nn.Module):
         Shared:  state_dim -> hidden_dims[0] -> ReLU
         Actor:   hidden_dims[0] -> hidden_dims[1] -> ReLU -> action_dim -> Softmax
         Critic:  hidden_dims[0] -> hidden_dims[1] -> ReLU -> 1
+
+    Uses orthogonal initialization for improved training stability.
     """
 
     def __init__(
@@ -51,6 +53,22 @@ class ActorCriticNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dims[1], 1),
         )
+
+        self._init_weights()
+
+    def _init_weights(self):
+        """Apply orthogonal initialization to all linear layers."""
+        for module_group in [self.shared, self.actor, self.critic]:
+            for module in module_group:
+                if isinstance(module, nn.Linear):
+                    nn.init.orthogonal_(module.weight, gain=np.sqrt(2))
+                    nn.init.constant_(module.bias, 0.0)
+        # Small gain for actor output layer (start near-uniform policy)
+        actor_output = self.actor[-2]  # Linear before Softmax
+        nn.init.orthogonal_(actor_output.weight, gain=0.01)
+        # Small gain for critic output layer (start near-zero values)
+        critic_output = self.critic[-1]  # Final Linear
+        nn.init.orthogonal_(critic_output.weight, gain=1.0)
 
     def forward(self, x: torch.Tensor):
         """Forward pass returning action probabilities and state value.
@@ -87,12 +105,14 @@ class PPOAgent(BaseAgent):
         epsilon_end: float = 0.01,
         epsilon_decay: float = 0.99995,
         clip_eps: float = 0.2,
+        value_clip_eps: float = 0.2,
         value_coef: float = 0.5,
         entropy_coef: float = 0.01,
         rollout_size: int = 128,
         n_epochs: int = 4,
         mini_batch_size: int = 32,
         gae_lambda: float = 0.95,
+        max_grad_norm: float = 0.5,
     ):
         super().__init__(state_dim, action_dim)
 
@@ -104,12 +124,14 @@ class PPOAgent(BaseAgent):
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay
         self.clip_eps = clip_eps
+        self.value_clip_eps = value_clip_eps
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
         self.rollout_size = rollout_size
         self.n_epochs = n_epochs
         self.mini_batch_size = mini_batch_size
         self.gae_lambda = gae_lambda
+        self.max_grad_norm = max_grad_norm
         self.lr = lr
 
         # Device selection
@@ -286,16 +308,11 @@ class PPOAgent(BaseAgent):
         # Compute GAE advantages and returns
         advantages, returns = self._compute_gae(rewards, values, dones, next_value)
 
-        # Normalize advantages
-        if len(advantages) > 1:
-            adv_std = advantages.std()
-            if adv_std > 1e-8:
-                advantages = (advantages - advantages.mean()) / (adv_std + 1e-8)
-
         # Convert to tensors
         states_t = torch.FloatTensor(states).to(self.device)
         actions_t = torch.LongTensor(actions).to(self.device)
         old_log_probs_t = torch.FloatTensor(old_log_probs).to(self.device)
+        old_values_t = torch.FloatTensor(values).to(self.device)
         advantages_t = torch.FloatTensor(advantages).to(self.device)
         returns_t = torch.FloatTensor(returns).to(self.device)
 
@@ -313,8 +330,17 @@ class PPOAgent(BaseAgent):
                 mb_states = states_t[mb_indices]
                 mb_actions = actions_t[mb_indices]
                 mb_old_log_probs = old_log_probs_t[mb_indices]
+                mb_old_values = old_values_t[mb_indices]
                 mb_advantages = advantages_t[mb_indices]
                 mb_returns = returns_t[mb_indices]
+
+                # Per-minibatch advantage normalization
+                if len(mb_advantages) > 1:
+                    adv_std = mb_advantages.std()
+                    if adv_std > 1e-8:
+                        mb_advantages = (mb_advantages - mb_advantages.mean()) / (
+                            adv_std + 1e-8
+                        )
 
                 # Forward pass
                 action_probs, values_pred = self.ac_net(mb_states)
@@ -335,8 +361,17 @@ class PPOAgent(BaseAgent):
                 )
                 policy_loss = -torch.min(surr1, surr2).mean()
 
-                # Value loss
-                value_loss = nn.functional.mse_loss(values_pred, mb_returns)
+                # Value loss with clipping (prevents large value updates)
+                value_loss_unclipped = (values_pred - mb_returns) ** 2
+                values_clipped = mb_old_values + torch.clamp(
+                    values_pred - mb_old_values,
+                    -self.value_clip_eps,
+                    self.value_clip_eps,
+                )
+                value_loss_clipped = (values_clipped - mb_returns) ** 2
+                value_loss = 0.5 * torch.max(
+                    value_loss_unclipped, value_loss_clipped
+                ).mean()
 
                 # Total loss
                 total_loss = (
@@ -348,7 +383,9 @@ class PPOAgent(BaseAgent):
                 # Gradient step
                 self.optimizer.zero_grad()
                 total_loss.backward()
-                nn.utils.clip_grad_norm_(self.ac_net.parameters(), max_norm=0.5)
+                nn.utils.clip_grad_norm_(
+                    self.ac_net.parameters(), max_norm=self.max_grad_norm
+                )
                 self.optimizer.step()
 
                 metrics = {
@@ -445,12 +482,14 @@ class PPOAgent(BaseAgent):
             "epsilon_end": float(self.epsilon_end),
             "epsilon_decay": float(self.epsilon_decay),
             "clip_eps": float(self.clip_eps),
+            "value_clip_eps": float(self.value_clip_eps),
             "value_coef": float(self.value_coef),
             "entropy_coef": float(self.entropy_coef),
             "rollout_size": int(self.rollout_size),
             "n_epochs": int(self.n_epochs),
             "mini_batch_size": int(self.mini_batch_size),
             "gae_lambda": float(self.gae_lambda),
+            "max_grad_norm": float(self.max_grad_norm),
             "lr": float(self.lr),
             "step_count": int(self._step_count),
         }
@@ -478,12 +517,14 @@ class PPOAgent(BaseAgent):
         self.gamma = params["gamma"]
         self.lr = params["lr"]
         self.clip_eps = params["clip_eps"]
+        self.value_clip_eps = params.get("value_clip_eps", 0.2)
         self.value_coef = params["value_coef"]
         self.entropy_coef = params["entropy_coef"]
         self.rollout_size = params["rollout_size"]
         self.n_epochs = params["n_epochs"]
         self.mini_batch_size = params["mini_batch_size"]
         self.gae_lambda = params["gae_lambda"]
+        self.max_grad_norm = params.get("max_grad_norm", 0.5)
         self._step_count = params["step_count"]
 
     def get_info(self) -> dict:
